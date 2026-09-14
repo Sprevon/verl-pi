@@ -87,3 +87,10 @@ Pi 负责每条任务轨迹的 agent/tool loop；verl 负责生成、训练张�
 
 - Hugging Face 模型信息查询经 SSH 转发报 `SSL: UNEXPECTED_EOF_WHILE_READING`，直连 curl 也超时；同一节点访问 ModelScope 官方 API 返回 200。训练尚未启动。计划支持显式 `--source modelscope`，保留实际源、revision 和权重文件校验记录，不修改训练依赖锁。
 - 新增验收脚本的一行列表推导超出 Ruff 120 字符限制；远程检查已报告具体行。按项目格式拆行后重新检查，此问题不影响算法语义。
+
+## 执行中补充：canonical 预检长度统计异常
+
+- 真实 Pi/Tau2 预检完成了两次 generation/turn、43 个工具 schema、一次 `check_apn_settings` 实际工具执行和 evaluator，未出现生命周期错误。
+- 但报告的两轮 prompt 长度均为 `2`，与完整工具/skill 上下文不符。先定位 Transformers 5.9 的 `apply_chat_template` 返回类型，以及 verl continuous token builder 的处理方式；在厘清前不把该长度作为容量验收依据，不启动 RL。
+
+- 已定位：锁定的 Transformers 5.9 `apply_chat_template` 默认 `return_dict=True`，`len(BatchEncoding)` 统计到两个字段。verl 实际训练 builder 已调用 `normalize_token_ids`，异常仅发生在新预检的统计代码。预检复用同一 normalize utility 并校验平坦整数序列，再跑 canonical 预检核实真实长度。

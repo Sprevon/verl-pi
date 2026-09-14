@@ -19,6 +19,7 @@ import torch
 from transformers import AutoTokenizer
 
 from verl.experimental.agent_loop.pi.client import PiSidecarClient
+from verl.utils.tokenizer.tokenizer import normalize_token_ids
 
 
 async def probe(task_id, model_path, max_prompt_length):
@@ -51,9 +52,13 @@ async def probe(task_id, model_path, max_prompt_length):
                 count += 1
                 tools = event["tools"]
                 tool_count = len(tools)
-                ids = tokenizer.apply_chat_template(
-                    event["messages"], tools=tools, add_generation_prompt=True, enable_thinking=False
+                ids = normalize_token_ids(
+                    tokenizer.apply_chat_template(
+                        event["messages"], tools=tools, add_generation_prompt=True, enable_thinking=False
+                    )
                 )
+                if not ids or not all(isinstance(token, int) for token in ids):
+                    raise ValueError("Canonical Pi prompt did not produce a flat token ID sequence")
                 lengths.append(len(ids))
                 if len(ids) > max_prompt_length:
                     raise ValueError(f"Canonical Pi prompt exceeds budget: {len(ids)} > {max_prompt_length}")
