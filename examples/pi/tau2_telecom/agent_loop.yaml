@@ -1,0 +1,16 @@
+- name: pi_agent
+  _target_: verl.experimental.agent_loop.pi_agent_loop.PiAgentLoop
+  cwd: ${oc.env:TAU2_BENCH_ROOT}
+  training_extension: ${oc.env:PI_TRAINING_EXTENSION}
+  agent_dir: ${oc.env:PI_AGENT_DIR}
+  node_binary: ${oc.env:PI_NODE_BINARY}
+  prompt_entry_type: agent-r1-task-prompt
+  evaluation_entry_type: agent-r1-evaluation
+  task_id_env: TAU2_TELECOM_TASK_ID
+  environment:
+    TAU2_PI_PYTHON: ${oc.env:TAU2_PI_PYTHON}
+    TAU2_SOLO_MODE: "1"
+  max_turns: ${oc.env:PI_MAX_TURNS,6}
+  event_timeout: 300
+  generation_timeout: 600
+  trace_dir: ${oc.env:PI_TRACE_DIR}

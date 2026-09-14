@@ -36,7 +36,7 @@ npm --prefix "$PROJECT_DIR/verl/experimental/agent_loop/pi/sidecar" install --ig
 
 TAU2_BENCH_ROOT="${TAU2_BENCH_ROOT:-$PI_WORK_ROOT/code/tau2-bench}"
 if [[ ! -d "$TAU2_BENCH_ROOT/.git" ]]; then
-  git clone https://github.com/Sprevon/tau2-bench.git "$TAU2_BENCH_ROOT"
+  git -c http.version=HTTP/1.1 clone --depth 1 https://github.com/Sprevon/tau2-bench.git "$TAU2_BENCH_ROOT"
 fi
 if [[ "$(git -C "$TAU2_BENCH_ROOT" rev-parse HEAD)" != "$TAU2_REVISION" ]]; then
   [[ -z "$(git -C "$TAU2_BENCH_ROOT" status --porcelain)" ]] || {
@@ -48,7 +48,7 @@ fi
 TAU2_ENV="$PI_WORK_ROOT/envs/tau2-pi"
 [[ -x "$TAU2_ENV/bin/python" ]] || "$UV_BIN" venv --python "$BOOTSTRAP_PYTHON" "$TAU2_ENV"
 # Isolate the environment/evaluator's LiteLLM dependencies from the trainer.
-"$UV_BIN" pip install --python "$TAU2_ENV/bin/python" -e "$TAU2_BENCH_ROOT[gym]"
+"$UV_BIN" pip install --python "$TAU2_ENV/bin/python" -e "$TAU2_BENCH_ROOT[gym]" pyarrow
 
 "$UV_BIN" --version
 node --version

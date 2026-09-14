@@ -98,6 +98,8 @@ setup(
             "trainer/config/*.yaml",
             "trainer/config/*/*.yaml",
             "experimental/*/config/*.yaml",
+            "experimental/agent_loop/pi/sidecar/*.mjs",
+            "experimental/agent_loop/pi/sidecar/package.json",
         ],
     },
     include_package_data=True,

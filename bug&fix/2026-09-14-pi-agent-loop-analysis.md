@@ -62,3 +62,23 @@ Pi 负责每条任务轨迹的 agent/tool loop；verl 负责生成、训练张�
 3. 单卡 sync GRPO：有效 rollout、非空 mask、正确 session 分组、有限 loss/梯度、optimizer update。
 4. checkpoint、实际训练指标与 Pi trace 落盘；报告工具/任务成功率与训练链路结果各自的证据。
 5. 记录依赖版本、远程 commit、运行命令、日志与 checkpoint 路径。任何未通过项目明确保留为未完成。
+
+## 执行中补充：远程拉取与环境版本
+
+- GitHub `ls-remote`、PyPI/npm HTTPS 均成功；首次完整 clone 报
+  `GnuTLS recv error (-110): The TLS connection was non-properly terminated`，
+  安装脚本尚未开始，没有已安装环境需要回滚。先改用独立分支的浅克隆重试，
+  不修改全局 Git/proxy 配置。
+- 进一步核实本仓库已有完整 `uv.lock`：Torch 2.11.0+cu130、vLLM 0.24.0、
+  Transformers 5.9.0，FSDP 原生轮子来自项目指定 wheelhouse。
+  环境准备复用该锁和 `fsdp + vllm + test` extras，不重新解析训练依赖。
+- 数据盘 50 GiB，共享盘 200 GiB，初始均为空；环境与 cache 放数据盘。
+- HTTP/1.1 浅克隆成功，安装推进到锁定依赖下载。`flash-attn==2.8.3` 的
+  wheelhouse GitHub release 重定向到 `release-assets.githubusercontent.com` 后连接超时，
+  uv 重试五次后退出。Torch wheel 已缓存，失败发生在下载阶段而不是编译/ABI 或 GPU。
+  下一步先只读验证 SSH 已有 17890 转发能否访问同一公开资源；确认后仅对本次安装进程
+  使用代理，不修改任何持久 Git/proxy 配置，不换依赖版本绕过锁。
+- 同一公开 wheel 经现有 17890 HTTP 转发返回 200，大小 242518291 字节。
+  采用进程级代理重试下载。另在源码核对中发现 Pi 的完整 JSON Schema 可能包含
+  `anyOf`，而 verl tool schema 的 property 要求 `type`；Hermes parser 本身不依赖
+  tools schema，因此该路径保留 Pi 原始 schema，仅解析生成文本中的工具 JSON。
