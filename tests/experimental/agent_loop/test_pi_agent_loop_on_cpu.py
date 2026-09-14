@@ -2,14 +2,51 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import asyncio
+import importlib
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+from hydra.utils import instantiate
+from omegaconf import OmegaConf
 
+from verl.experimental.agent_loop import agent_loop, pi_agent_loop
 from verl.experimental.agent_loop.pi.recorder import PiTrainingRecorder
 from verl.experimental.agent_loop.pi_agent_loop import PiAgentLoop
 from verl.experimental.agent_loop.tool_parser import FunctionCall
+
+
+def test_yaml_registration_survives_lazy_import_and_multiple_instances(monkeypatch, tmp_path):
+    configured = OmegaConf.create(
+        {
+            "_target_": "verl.experimental.agent_loop.pi_agent_loop.PiAgentLoop",
+            "cwd": str(tmp_path),
+            "training_extension": str(tmp_path / "canonical.ts"),
+            "max_turns": 7,
+        }
+    )
+    monkeypatch.setitem(agent_loop._agent_loop_registry, "pi_agent", configured)
+    # YAML is registered before Hydra imports the target in a fresh Ray worker.
+    importlib.reload(pi_agent_loop)
+
+    def base_init(self, **kwargs):
+        self.config = OmegaConf.create(
+            {
+                "trainer": {"use_v1": True, "v1": {"trainer_mode": "sync"}},
+                "algorithm": {"adv_estimator": "grpo"},
+                "distillation": {"enabled": False},
+            }
+        )
+        self.processor = self.tokenizer = None
+        self.rollout_config = SimpleNamespace(multi_turn=SimpleNamespace(format="hermes"))
+
+    monkeypatch.setattr(agent_loop.AgentLoopBase, "__init__", base_init)
+    monkeypatch.setattr(pi_agent_loop.ToolParser, "get_tool_parser", lambda *args: None)
+    for _ in range(2):
+        instance = instantiate(agent_loop._agent_loop_registry["pi_agent"])
+        assert instance.cwd == str(tmp_path)
+        assert instance.training_extension == str(tmp_path / "canonical.ts")
+        assert instance.max_turns == 7
 
 
 def record(recorder, name="g0", **kwargs):

@@ -100,3 +100,12 @@ Pi 负责每条任务轨迹的 agent/tool loop；verl 负责生成、训练张�
 - Run `pi-grpo-smoke-20260914-a` 配置校验和 Ray 启动成功，但停在 TQ 初始化，GPU 未使用。`ray status` 显示 `1/8 CPU` 已占用，另有 `CPU:1 × 8 (SPREAD)` placement group 等待。
 - 根因是示例把 Ray CPU 限为 8，但继承的 SimpleStorage 默认创建 8 个各占 1 CPU 的 storage actor，controller 另占 1 CPU，整组无法调度。锁定的 TQ `simple_storage_bootstrap.py:37` 会等待整组 ready。
 - 单卡 smoke 只需 1 个 storage unit；在示例中显式配置 `transfer_queue.backend.SimpleStorage.num_data_storage_units=1`，保留原生 TQ 逻辑和 8 CPU 限额。终止本次无进展的自有 driver，拉取本地修正后在新 run 目录重启，保留原日志。
+
+- 重启前的 Git 拉取再次停滞：当前 SSH HTTP 转发访问 GitHub 报 `SSL unexpected eof`，上一轮已完成的下载不受影响。保留远程既有 commit，终止本次卡住的 Git 传输，先验证直连 HTTP/1.1，再用有低速超时限制的单次 Git 配置重试。
+
+## 执行中补充：并行 Pi session 的注册表覆盖
+
+- Run b 已进入真实 vLLM generation，但同组另一个 session 初始化时报 `PiAgentLoop.__init__ missing cwd and training_extension`。第一条已有 canonical request/实际生成，第二条无 trace。
+- 需要检查 YAML agent config 的加载和模块装饰器注册顺序：初步怀疑 Hydra 首次导入 Pi 模块时，`@register` 用只有 target 的默认配置覆盖了已加载的完整 YAML，导致后续实例丢失必要参数。当前运行不能作为完整 GRPO 组验收；先核对调用链再修正，并补充连续实例化回归测试。
+
+- 已确认 `agent_loop.py:445` 的 register 装饰器会无条件覆盖 YAML registry。去掉 Pi 类上的重复装饰器，使用 agent_loop_config_path 注册的完整配置；不修改标准 verl 注册器。回归测试先注册配置，再重新导入 Pi 模块，并通过 Hydra 连续实例化两次。Run b 终止于不完整组导致的空 keys，未取得合格训练结果。

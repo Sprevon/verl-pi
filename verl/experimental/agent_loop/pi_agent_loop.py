@@ -15,7 +15,7 @@ from pathlib import Path
 from time import perf_counter
 from uuid import uuid4
 
-from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopMetrics, AgentLoopOutput, register
+from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopMetrics, AgentLoopOutput
 from verl.experimental.agent_loop.pi.client import PiSidecarClient, PiSidecarError
 from verl.experimental.agent_loop.pi.recorder import PiTrainingRecorder
 from verl.experimental.agent_loop.tool_parser import ToolParser
@@ -35,8 +35,9 @@ def _as_dict(value):
     raise TypeError(f"Expected an object, got {type(value).__name__}")
 
 
-@register("pi_agent")
 class PiAgentLoop(AgentLoopBase):
+    # Registered by agent_loop_config_path: decorating this lazily imported class
+    # would replace that full YAML config with a target-only registry entry.
     def __init__(
         self,
         *args,
