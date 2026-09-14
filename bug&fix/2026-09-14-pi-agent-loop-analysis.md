@@ -109,3 +109,18 @@ Pi 负责每条任务轨迹的 agent/tool loop；verl 负责生成、训练张�
 - 需要检查 YAML agent config 的加载和模块装饰器注册顺序：初步怀疑 Hydra 首次导入 Pi 模块时，`@register` 用只有 target 的默认配置覆盖了已加载的完整 YAML，导致后续实例丢失必要参数。当前运行不能作为完整 GRPO 组验收；先核对调用链再修正，并补充连续实例化回归测试。
 
 - 已确认 `agent_loop.py:445` 的 register 装饰器会无条件覆盖 YAML registry。去掉 Pi 类上的重复装饰器，使用 agent_loop_config_path 注册的完整配置；不修改标准 verl 注册器。回归测试先注册配置，再重新导入 Pi 模块，并通过 Hydra 连续实例化两次。Run b 终止于不完整组导致的空 keys，未取得合格训练结果。
+
+## 执行中补充：链路通过但小模型批次无学习信号
+
+- Run c 正常完成 1 个训练 step、两条真实 student/Pi 轨迹、工具执行、验证和 actor/optimizer checkpoint，退出码 0。并行配置问题已消除。
+- 该批两条任务 reward 都为 0，原生 GRPO advantages、pg_loss 和 grad_norm 全为 0。Qwen3-0.6B 对复合任务未完成全部修复，不能把本次结果描述为有效学习更新。
+- 保留该基线和原始 evaluator，下一轮使用 Qwen3-1.7B、同一 canonical 训练任务、4 条 rollout 和 8 轮上限，检查能否获得奖励差异及非零梯度。只是单卡训练信号 smoke，不估计任务集成功率。模型/运行目录另建，避免覆盖已通过的链路证据。
+
+- 安装包检查中 `uv build` 未显式指定 Python 时开始下载另一个受管 Python；训练环境本身不受影响。构建改为显式 `--python /root/autodl-tmp/envs/verl-pi/bin/python`，确保使用已验证环境并避免额外解释器。
+
+## 执行中补充：wheel 中缺失 Node sidecar
+
+- 在已验证训练 Python 下执行 `uv build --wheel --no-build-isolation` 成功，但解包清单只有 Pi Python 文件，没有 `sidecar/main.mjs` 和 `sidecar/package.json`。源码 checkout 运行不受影响，但 wheel 安装后会缺少 Pi 运行入口。
+- 定位项目实际构建后端及 package-data 来源，修正有效的打包配置后重新构建并检查 zip 清单，不把仅构建成功当作打包完整。
+
+- 根因：PEP 517 构建实际采用 `pyproject.toml` 的 `[tool.setuptools.package-data]`，此前仅在 fallback `setup.py` 增加模式。补齐 pyproject 的同两项 sidecar 文件，不改变依赖版本或锁。

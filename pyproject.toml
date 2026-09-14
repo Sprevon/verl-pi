@@ -294,6 +294,8 @@ verl = [
   "trainer/config/*.yaml",
   "trainer/config/*/*.yaml",
   "experimental/*/config/*.yaml",
+  "experimental/agent_loop/pi/sidecar/*.mjs",
+  "experimental/agent_loop/pi/sidecar/package.json",
 ]
 
 # One universal uv.lock: `uv lock` resolves every extra; conflicting extras
