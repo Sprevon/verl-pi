@@ -72,6 +72,21 @@ evaluator 和 session completion。该 probe 的生成回复是脚本指定的�
 `PI_MAX_TURNS`、`PI_ROLLOUT_N`、`PI_MAX_PROMPT_LENGTH`、`PI_MAX_RESPONSE_LENGTH`
 可调，启动器的其余参数作为 Hydra override 传入。
 
+若复合任务的少量样本全失败，可额外用 canonical `small` split 做优化器诊断。
+该结果只说明训练链路，不作为正式 train/test 成功率；数据 manifest 和 trace 会记录
+`source_split=small`。例如以下单故障任务仍使用真实 Pi、student 生成和原始 evaluator：
+
+```bash
+"$TAU2_PI_PYTHON" examples/pi/tau2_telecom/prepare_data.py \
+  --output-dir "$PI_WORK_ROOT/data/pi-tau2-small-smoke" --train-split small \
+  --train-task '[service_issue]airplane_mode_on[PERSONA:None]' --max-tasks 1
+PI_DATA_DIR="$PI_WORK_ROOT/data/pi-tau2-small-smoke" PI_ROLLOUT_N=8 PI_MAX_TURNS=4 \
+  PI_RUN_DIR="$PI_WORK_ROOT/runs/pi-grpo-small-smoke" \
+  bash examples/pi/tau2_telecom/run_single_card.sh
+"$PYTHON_BIN" examples/pi/tau2_telecom/verify_run.py \
+  "$PI_WORK_ROOT/runs/pi-grpo-small-smoke" --require-learning-signal
+```
+
 ## 验收证据
 
 - `preflight.json`：canonical prompt 长度、tools、生命周期、依赖与 Git revision。
@@ -84,4 +99,6 @@ evaluator 和 session completion。该 probe 的生成回复是脚本指定的�
 
 需要分别核实工具执行、任务奖励、有效训练 token、有限 loss/梯度及 checkpoint。
 组内零优势或零梯度必须明确报告，不能以 checkpoint 存在代替学习信号验证。
-问题定位记录见 `bug&fix/2026-09-14-pi-agent-loop-analysis.md`，最终运行结果另行记录。
+2026-09-14 已在 vGPUN 单卡验证：默认正式复合任务完成链路但组内零奖励；small split
+诊断任务完成非零 GRPO 更新。详见 [实现、问题修复和完整运行结果](../../../bug&fix/2026-09-14-pi-agent-loop-resolution.md)。
+问题定位记录见 `bug&fix/2026-09-14-pi-agent-loop-analysis.md`。

@@ -131,3 +131,10 @@ Pi 负责每条任务轨迹的 agent/tool loop；verl 负责生成、训练张�
 - 为单独验证优化器信号，增加可显式选择 canonical `small` split 的数据导出选项，在单故障真实任务上做诊断性 GRPO smoke。该任务仍通过相同 Pi、工具、evaluator 和 student vLLM，不作为正式 train/test 结果，不改变任务或奖励规则。
 
 - 工具失败标志另有统计问题：canonical wrapper 可返回 `isError=false` 但 `details.error=true`（例如无参工具收到额外参数）。现有 Pi 错误计数只看前者会漏计。统一按任一标志为真统计，预检也按相同条件失败；原始 tool result 和 evaluator reward 不做改写。
+
+## 最终验证结论（2026-09-14）
+
+- 回归测试 14 passed，真实 Pi SDK 测试 2 passed，wheel 包含 Node sidecar。
+- Run c / d 均完成正式任务上的单卡真实 RL 链路，退出 0，但稀疏奖励全零，未作为非零更新证明。
+- Run e 使用明确标记的 canonical small 任务，8 条真实轨迹奖励为 6 个 1 和 2 个 0；14 轮、422 个训练 response token，pg_loss=-0.24499539，grad_norm=28.28125。严格审计通过，checkpoint 完整，退出 0，GPU 恢复空闲。
+- 详细修复、命令、指标和限定结论见 `2026-09-14-pi-agent-loop-resolution.md`。
