@@ -82,3 +82,8 @@ Pi 负责每条任务轨迹的 agent/tool loop；verl 负责生成、训练张�
   采用进程级代理重试下载。另在源码核对中发现 Pi 的完整 JSON Schema 可能包含
   `anyOf`，而 verl tool schema 的 property 要求 `type`；Hermes parser 本身不依赖
   tools schema，因此该路径保留 Pi 原始 schema，仅解析生成文本中的工具 JSON。
+
+## 执行中补充：模型下载和静态检查
+
+- Hugging Face 模型信息查询经 SSH 转发报 `SSL: UNEXPECTED_EOF_WHILE_READING`，直连 curl 也超时；同一节点访问 ModelScope 官方 API 返回 200。训练尚未启动。计划支持显式 `--source modelscope`，保留实际源、revision 和权重文件校验记录，不修改训练依赖锁。
+- 新增验收脚本的一行列表推导超出 Ruff 120 字符限制；远程检查已报告具体行。按项目格式拆行后重新检查，此问题不影响算法语义。

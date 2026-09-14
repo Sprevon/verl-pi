@@ -36,7 +36,17 @@ source examples/pi/tau2_telecom/common.sh
   --repo-id Qwen/Qwen3-0.6B --output-dir "$STUDENT_MODEL"
 ```
 
-模型下载记录 upstream commit；Tau2 使用仓库的 task/allowlist/DB/evaluator。
+Hugging Face 不通时，可通过官方 ModelScope 源下载，下载工具单独运行，不改变训练锁：
+
+```bash
+UV_CACHE_DIR="$PI_WORK_ROOT/.cache/uv" "$PI_WORK_ROOT/tools/uv/bin/uv" run --no-project \
+  --python /root/miniconda3/bin/python --with modelscope==1.34.0 \
+  python examples/pi/tau2_telecom/download_model.py --source modelscope \
+  --repo-id Qwen/Qwen3-0.6B --output-dir "$STUDENT_MODEL"
+```
+
+模型下载记录实际来源、revision 和逐文件 SHA-256；ModelScope 下载额外核对官方文件哈希。
+Tau2 使用仓库的 task/allowlist/DB/evaluator。
 solo 模式无需用户模拟器服务或外部 LLM 凭据。常用覆盖包括 `PI_WORK_ROOT`、
 `PYTHON_BIN`、`TAU2_PI_PYTHON`、`PI_NODE_BINARY`、`STUDENT_MODEL`。
 

@@ -44,11 +44,15 @@ def main():
                 failures.append(f"{path.name}: invalid rollout logprobs")
         reward = evaluations[0]["result"]["reward"]
         summary = {
-            "session_id": sample["session_id"], "uid": sample["uid"], "split": sample.get("split"),
-            "task_id": sample["task_id"], "turns": len(turns),
+            "session_id": sample["session_id"],
+            "uid": sample["uid"],
+            "split": sample.get("split"),
+            "task_id": sample["task_id"],
+            "turns": len(turns),
             "generated_tokens": sum(len(event["response_ids"]) for event in tokens),
             "tool_results": sum(len(event["tool_results"]) for event in turns),
-            "reward": reward, "truncated": completions[0].get("truncated", False),
+            "reward": reward,
+            "truncated": completions[0].get("truncated", False),
         }
         sessions.append(summary)
         if sample.get("split") == "train":
@@ -69,27 +73,36 @@ def main():
             if value is None or not math.isfinite(value):
                 failures.append(f"Nonfinite/missing {key} at step {record['step']}")
     checkpoints = sorted((run_dir / "checkpoints").glob("global_step_*"))
-    checkpoint_files = [str(path.relative_to(run_dir)) for checkpoint in checkpoints for path in checkpoint.rglob("*.pt")]
+    checkpoint_files = [
+        str(path.relative_to(run_dir)) for checkpoint in checkpoints for path in checkpoint.rglob("*.pt")
+    ]
     if not any("model" in Path(path).name for path in checkpoint_files):
         failures.append("Missing actor model checkpoint")
     if not any("optim" in Path(path).name for path in checkpoint_files):
         failures.append("Missing optimizer checkpoint")
     if (run_dir / "exit_code.txt").read_text().strip() != "0":
         failures.append("Trainer exited unsuccessfully")
-    learning_signal = (
-        any(len(set(rewards)) > 1 for rewards in groups.values())
-        and any((record["data"].get("actor/grad_norm") or 0) > 0 for record in updates)
+    learning_signal = any(len(set(rewards)) > 1 for rewards in groups.values()) and any(
+        (record["data"].get("actor/grad_norm") or 0) > 0 for record in updates
     )
     if args.require_learning_signal and not learning_signal:
         failures.append("No nonzero GRPO learning signal")
     result = {
-        "passed": not failures, "learning_signal": learning_signal, "failures": failures,
-        "group_rewards": dict(groups), "sessions": sessions,
+        "passed": not failures,
+        "learning_signal": learning_signal,
+        "failures": failures,
+        "group_rewards": dict(groups),
+        "sessions": sessions,
         "updates": [
-            {"step": record["step"], **{
-                key: value for key, value in record["data"].items()
-                if key.startswith(("actor/", "critic/advantages/", "training/", "val-core/"))
-            }} for record in updates
+            {
+                "step": record["step"],
+                **{
+                    key: value
+                    for key, value in record["data"].items()
+                    if key.startswith(("actor/", "critic/advantages/", "training/", "val-core/"))
+                },
+            }
+            for record in updates
         ],
         "checkpoint_files": checkpoint_files,
     }
