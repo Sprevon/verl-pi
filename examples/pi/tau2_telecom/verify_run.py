@@ -7,6 +7,8 @@ import math
 from collections import defaultdict
 from pathlib import Path
 
+from verl.experimental.agent_loop.pi.recorder import is_tool_error
+
 
 def read_jsonl(path):
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
@@ -47,10 +49,12 @@ def main():
             "session_id": sample["session_id"],
             "uid": sample["uid"],
             "split": sample.get("split"),
+            "source_split": sample.get("source_split", sample.get("split")),
             "task_id": sample["task_id"],
             "turns": len(turns),
             "generated_tokens": sum(len(event["response_ids"]) for event in tokens),
             "tool_results": sum(len(event["tool_results"]) for event in turns),
+            "tool_errors": sum(is_tool_error(result) for event in turns for result in event["tool_results"]),
             "reward": reward,
             "truncated": completions[0].get("truncated", False),
         }

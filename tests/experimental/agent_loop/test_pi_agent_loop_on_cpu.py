@@ -11,7 +11,7 @@ from hydra.utils import instantiate
 from omegaconf import OmegaConf
 
 from verl.experimental.agent_loop import agent_loop, pi_agent_loop
-from verl.experimental.agent_loop.pi.recorder import PiTrainingRecorder
+from verl.experimental.agent_loop.pi.recorder import PiTrainingRecorder, is_tool_error
 from verl.experimental.agent_loop.pi_agent_loop import PiAgentLoop
 from verl.experimental.agent_loop.tool_parser import FunctionCall
 
@@ -53,6 +53,13 @@ def record(recorder, name="g0", **kwargs):
     return recorder.record_generation(
         name, prompt_ids=[1, 2], response_ids=[3, 4], response_logprobs=kwargs.pop("logprobs", [-0.1, -0.2]), **kwargs
     )
+
+
+def test_tool_failure_includes_canonical_error_details():
+    assert is_tool_error({"isError": False, "details": {"error": True}})
+    assert is_tool_error({"isError": True, "details": {}})
+    assert not is_tool_error({"isError": False, "details": {"error": False}})
+    assert not is_tool_error({"details": None})
 
 
 def completed(name="g0"):

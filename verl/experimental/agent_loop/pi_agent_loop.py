@@ -17,7 +17,7 @@ from uuid import uuid4
 
 from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopMetrics, AgentLoopOutput
 from verl.experimental.agent_loop.pi.client import PiSidecarClient, PiSidecarError
-from verl.experimental.agent_loop.pi.recorder import PiTrainingRecorder
+from verl.experimental.agent_loop.pi.recorder import PiTrainingRecorder, is_tool_error
 from verl.experimental.agent_loop.tool_parser import ToolParser
 from verl.tools.schemas import OpenAIFunctionToolSchema
 from verl.trainer.distillation import is_distillation_enabled
@@ -187,6 +187,7 @@ class PiAgentLoop(AgentLoopBase):
                 "uid": kwargs.get("uid"),
                 "session_id": session_id,
                 "split": extra_info.get("split"),
+                "source_split": extra_info.get("source_split", extra_info.get("split")),
             }
         )
         try:
@@ -255,7 +256,7 @@ class PiAgentLoop(AgentLoopBase):
             "score": reward,
             "pi_turns": len(recorder.turns),
             "pi_tool_calls": len(tool_results),
-            "pi_tool_errors": sum(bool(result.get("isError")) for result in tool_results),
+            "pi_tool_errors": sum(is_tool_error(result) for result in tool_results),
             "pi_truncated": int(bool(completion.get("truncated"))),
         }
         return [

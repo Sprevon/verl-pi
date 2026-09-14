@@ -124,3 +124,10 @@ Pi 负责每条任务轨迹的 agent/tool loop；verl 负责生成、训练张�
 - 定位项目实际构建后端及 package-data 来源，修正有效的打包配置后重新构建并检查 zip 清单，不把仅构建成功当作打包完整。
 
 - 根因：PEP 517 构建实际采用 `pyproject.toml` 的 `[tool.setuptools.package-data]`，此前仅在 fallback `setup.py` 增加模式。补齐 pyproject 的同两项 sidecar 文件，不改变依赖版本或锁。
+
+## 执行中补充：1.7B 轨迹行为和诊断任务
+
+- Run d 完成 4 条轨迹共 22 次真实模型调用；终局 reward 仍为 `[0,0,0,0]`。实际出现不存在的工具名和无参 toggle 工具的额外参数，说明当前稀疏复合任务未产生成功样本；不能用这一批宣称非零更新。
+- 为单独验证优化器信号，增加可显式选择 canonical `small` split 的数据导出选项，在单故障真实任务上做诊断性 GRPO smoke。该任务仍通过相同 Pi、工具、evaluator 和 student vLLM，不作为正式 train/test 结果，不改变任务或奖励规则。
+
+- 工具失败标志另有统计问题：canonical wrapper 可返回 `isError=false` 但 `details.error=true`（例如无参工具收到额外参数）。现有 Pi 错误计数只看前者会漏计。统一按任一标志为真统计，预检也按相同条件失败；原始 tool result 和 evaluator reward 不做改写。

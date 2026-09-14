@@ -19,6 +19,7 @@ import torch
 from transformers import AutoTokenizer
 
 from verl.experimental.agent_loop.pi.client import PiSidecarClient
+from verl.experimental.agent_loop.pi.recorder import is_tool_error
 from verl.utils.tokenizer.tokenizer import normalize_token_ids
 
 
@@ -86,7 +87,7 @@ async def probe(task_id, model_path, max_prompt_length):
                 break
         if count < 2 or completed != count or not results or evaluation is None or "reward" not in evaluation:
             raise RuntimeError("Real Pi/Tau2 lifecycle probe is incomplete")
-        if any(result.get("isError") for result in results):
+        if any(is_tool_error(result) for result in results):
             raise RuntimeError("Canonical read tool failed during the lifecycle probe")
         return {
             "task_id": task_id,

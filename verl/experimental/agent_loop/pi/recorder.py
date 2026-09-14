@@ -3,8 +3,14 @@
 """Record actual sampling inputs/outputs, independently of Pi's text transcript."""
 
 import math
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import Any
+
+
+def is_tool_error(result: dict) -> bool:
+    details = result.get("details")
+    return bool(result.get("isError") or (isinstance(details, Mapping) and details.get("error")))
 
 
 @dataclass
