@@ -49,6 +49,8 @@ npm --prefix verl/experimental/agent_loop/pi/sidecar run check
 npm --prefix verl/experimental/agent_loop/pi/sidecar test
 PI_RUN_DIR=/root/autodl-tmp/runs/pi-grpo-smoke \
   bash examples/pi/tau2_telecom/run_single_card.sh
+"$PYTHON_BIN" examples/pi/tau2_telecom/verify_run.py \
+  /root/autodl-tmp/runs/pi-grpo-smoke --require-learning-signal
 ```
 
 启动器先运行真实 Pi/Tau2 CPU lifecycle probe：一次 canonical read tool、后续 turn、
@@ -65,7 +67,8 @@ evaluator 和 session completion。该 probe 的生成回复是脚本指定的�
 - `preflight.json`：canonical prompt 长度、tools、生命周期、依赖与 Git revision。
 - `pi-traces/*.jsonl`：每条真实 RL 轨迹的请求、原始 token/logprobs、tool results、
   evaluator、完成事件；失败也写入 `rollout_error`。
-- `train.log`、`exit_code.txt`：训练 loss、梯度、reward、优势、验证和退出状态。
+- `train.log`、`metrics.jsonl`、`exit_code.txt`：训练 loss、梯度、reward、优势、验证和退出状态。
+- `verification.json`：事件/token/梯度/checkpoint 审计，单独标明是否具有非零学习信号。
 - `checkpoints/global_step_1`：actor 模型、优化器及训练恢复状态。
 - `rollouts/`、`validation/`：verl 原生输出。
 

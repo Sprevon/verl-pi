@@ -75,7 +75,10 @@ def make_loop(tmp_path):
     loop = object.__new__(PiAgentLoop)
     loop.loop = asyncio.get_running_loop()
     loop.rollout_config = SimpleNamespace(
-        prompt_length=8, response_length=3, max_model_len=12, calculate_log_probs=True,
+        prompt_length=8,
+        response_length=3,
+        max_model_len=12,
+        calculate_log_probs=True,
         multi_turn=SimpleNamespace(format="hermes"),
     )
     loop.tokenizer = SimpleNamespace(eos_token="<eos>", bos_token=None, pad_token=None)
@@ -87,11 +90,15 @@ def make_loop(tmp_path):
         generate=AsyncMock(
             side_effect=[
                 SimpleNamespace(
-                    token_ids=[7, 8, 9], log_probs=[-0.1, -0.2, -0.3], routed_experts=None,
+                    token_ids=[7, 8, 9],
+                    log_probs=[-0.1, -0.2, -0.3],
+                    routed_experts=None,
                     extra_fields={"min_global_steps": 1, "max_global_steps": 1},
                 ),
                 SimpleNamespace(
-                    token_ids=[10, 11], log_probs=[-0.4, -0.5], routed_experts=None,
+                    token_ids=[10, 11],
+                    log_probs=[-0.4, -0.5],
+                    routed_experts=None,
                     extra_fields={"min_global_steps": 1, "max_global_steps": 1},
                 ),
             ]
@@ -130,18 +137,28 @@ class ScriptedTransport:
 
     async def start(self, payload, timeout):
         self.payload = payload
-        tools = [{"type": "function", "function": {
-            "name": "lookup", "description": "Lookup a record", "parameters": {
-                "type": "object", "properties": {"optional": {"anyOf": [{"type": "string"}, {"type": "null"}]}}
+        tools = [
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup",
+                    "description": "Lookup a record",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"optional": {"anyOf": [{"type": "string"}, {"type": "null"}]}},
+                    },
+                },
             }
-        }}]
+        ]
         request = {"type": "generation_request", "tools": tools}
         self.events = [
             {"type": "session_started"},
             {**request, "id": "r0", "generation_id": "g0", "messages": [{"role": "user", "content": "task"}]},
             {"type": "step_complete", **completed(), "tool_results": [{"isError": False}]},
             {
-                **request, "id": "r1", "generation_id": "g1",
+                **request,
+                "id": "r1",
+                "generation_id": "g1",
                 "messages": [{"role": "user", "content": "task"}, {"role": "tool", "content": "observation"}],
             },
             {"type": "step_complete", **completed("g1")},

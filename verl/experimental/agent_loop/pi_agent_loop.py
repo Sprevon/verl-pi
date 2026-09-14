@@ -57,6 +57,9 @@ class PiAgentLoop(AgentLoopBase):
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        max_turns = int(max_turns)
+        event_timeout = float(event_timeout)
+        generation_timeout = float(generation_timeout)
         if not self.config.trainer.get("use_v1", False):
             raise ValueError("PiAgentLoop requires trainer.use_v1=true for multi-output trajectories")
         if self.config.trainer.v1.trainer_mode != "sync":
@@ -162,9 +165,7 @@ class PiAgentLoop(AgentLoopBase):
         environment = dict(self.environment)
         if self.task_id_env:
             environment[self.task_id_env] = task_id
-        client = PiSidecarClient(
-            node_binary=self.node_binary, entrypoint=self.sidecar_entrypoint, env=environment
-        )
+        client = PiSidecarClient(node_binary=self.node_binary, entrypoint=self.sidecar_entrypoint, env=environment)
         recorder = PiTrainingRecorder()
         evaluation = completion = None
         trace = None
@@ -178,7 +179,15 @@ class PiAgentLoop(AgentLoopBase):
                 trace.write(json.dumps(data, ensure_ascii=False) + "\n")
                 trace.flush()
 
-        record_trace({"type": "sample", "task_id": task_id, "uid": kwargs.get("uid"), "session_id": session_id})
+        record_trace(
+            {
+                "type": "sample",
+                "task_id": task_id,
+                "uid": kwargs.get("uid"),
+                "session_id": session_id,
+                "split": extra_info.get("split"),
+            }
+        )
         try:
             await client.start(
                 {
@@ -211,15 +220,20 @@ class PiAgentLoop(AgentLoopBase):
                             "prompt_ids": turn.prompt_ids,
                             "response_ids": turn.response_ids,
                             "response_logprobs": turn.response_logprobs,
+                            "response_mask": [1] * len(turn.response_ids),
                         }
                     )
                     await client.respond(event["id"], result)
                 elif event_type == "step_complete":
+                    if evaluation is not None:
+                        raise PiSidecarError("Pi completed a turn after its terminal evaluation")
                     recorder.complete_turn(event)
                 elif event_type == "evaluation_result":
                     if evaluation is not None:
                         raise PiSidecarError("Pi returned duplicate terminal evaluations")
                     evaluation = event.get("result")
+                    if not isinstance(evaluation, dict):
+                        raise PiSidecarError("Pi evaluation_result must contain a JSON object")
                 elif event_type == "session_complete":
                     completion = event
                 else:

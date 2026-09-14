@@ -6,6 +6,7 @@ cd "$PROJECT_DIR"
 export CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}"
 RUN_DIR="${PI_RUN_DIR:-$PI_WORK_ROOT/runs/verl-pi-$(date +%Y%m%d-%H%M%S)}"
 export PI_TRACE_DIR="$RUN_DIR/pi-traces"
+export VERL_FILE_LOGGER_PATH="$RUN_DIR/metrics.jsonl"
 MAX_PROMPT_LENGTH="${PI_MAX_PROMPT_LENGTH:-24576}"
 MAX_RESPONSE_LENGTH="${PI_MAX_RESPONSE_LENGTH:-512}"
 ROLLOUT_N="${PI_ROLLOUT_N:-2}"
@@ -53,7 +54,7 @@ set +e
   trainer.nnodes=1 trainer.n_gpus_per_node=1 trainer.total_epochs=1 trainer.total_training_steps=1 \
   trainer.save_freq=1 trainer.test_freq=1 trainer.val_before_train=false trainer.resume_mode=disable \
   trainer.project_name=verl_pi_tau2 trainer.experiment_name=single_card_grpo \
-  'trainer.logger=[console]' "trainer.default_local_dir=$RUN_DIR/checkpoints" \
+  'trainer.logger=[console,file]' "trainer.default_local_dir=$RUN_DIR/checkpoints" \
   "trainer.rollout_data_dir=$RUN_DIR/rollouts" "trainer.validation_data_dir=$RUN_DIR/validation" \
   ray_kwargs.ray_init.num_cpus=8 "$@" 2>&1 | tee "$RUN_DIR/train.log"
 run_status=${PIPESTATUS[0]}
