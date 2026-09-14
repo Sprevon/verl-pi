@@ -56,6 +56,7 @@ set +e
   trainer.project_name=verl_pi_tau2 trainer.experiment_name=single_card_grpo \
   'trainer.logger=[console,file]' "trainer.default_local_dir=$RUN_DIR/checkpoints" \
   "trainer.rollout_data_dir=$RUN_DIR/rollouts" "trainer.validation_data_dir=$RUN_DIR/validation" \
+  transfer_queue.backend.SimpleStorage.num_data_storage_units=1 \
   ray_kwargs.ray_init.num_cpus=8 "$@" 2>&1 | tee "$RUN_DIR/train.log"
 run_status=${PIPESTATUS[0]}
 set -e

@@ -94,3 +94,9 @@ Pi 负责每条任务轨迹的 agent/tool loop；verl 负责生成、训练张�
 - 但报告的两轮 prompt 长度均为 `2`，与完整工具/skill 上下文不符。先定位 Transformers 5.9 的 `apply_chat_template` 返回类型，以及 verl continuous token builder 的处理方式；在厘清前不把该长度作为容量验收依据，不启动 RL。
 
 - 已定位：锁定的 Transformers 5.9 `apply_chat_template` 默认 `return_dict=True`，`len(BatchEncoding)` 统计到两个字段。verl 实际训练 builder 已调用 `normalize_token_ids`，异常仅发生在新预检的统计代码。预检复用同一 normalize utility 并校验平坦整数序列，再跑 canonical 预检核实真实长度。
+
+## 执行中补充：单卡启动时 TransferQueue 资源等待
+
+- Run `pi-grpo-smoke-20260914-a` 配置校验和 Ray 启动成功，但停在 TQ 初始化，GPU 未使用。`ray status` 显示 `1/8 CPU` 已占用，另有 `CPU:1 × 8 (SPREAD)` placement group 等待。
+- 根因是示例把 Ray CPU 限为 8，但继承的 SimpleStorage 默认创建 8 个各占 1 CPU 的 storage actor，controller 另占 1 CPU，整组无法调度。锁定的 TQ `simple_storage_bootstrap.py:37` 会等待整组 ready。
+- 单卡 smoke 只需 1 个 storage unit；在示例中显式配置 `transfer_queue.backend.SimpleStorage.num_data_storage_units=1`，保留原生 TQ 逻辑和 8 CPU 限额。终止本次无进展的自有 driver，拉取本地修正后在新 run 目录重启，保留原日志。
