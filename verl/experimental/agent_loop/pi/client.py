@@ -46,7 +46,7 @@ class PiSidecarClient:
         self._reader = asyncio.create_task(self._read_stdout())
         self._stderr = asyncio.create_task(self._read_stderr())
         ready = await self.next_event(timeout)
-        if ready.get("type") != "ready" or ready.get("protocol_version") != 2:
+        if ready.get("type") != "ready" or ready.get("protocol_version") != 3:
             raise PiSidecarError(f"Unsupported Pi startup handshake: {ready}")
         await self.send({"type": "start_session", **payload})
 

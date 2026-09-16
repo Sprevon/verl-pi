@@ -14,10 +14,24 @@ def read_jsonl(path):
     return [json.loads(line) for line in path.read_text().splitlines() if line.strip()]
 
 
+def incremental_prefix_errors(tokens):
+    """Audit token IDs sent to generation, without decoding the recorded stream."""
+    failures = []
+    for previous, current in zip(tokens, tokens[1:], strict=False):
+        prefix = previous["prompt_ids"] + previous["response_ids"]
+        prompt = current["prompt_ids"]
+        if prompt[: len(prefix)] != prefix:
+            failures.append(f"{current['generation_id']}: previous prompt/response token prefix changed")
+        elif len(prompt) <= len(prefix):
+            failures.append(f"{current['generation_id']}: no appended context after previous response")
+    return failures
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("run_dir", type=Path)
     parser.add_argument("--require-learning-signal", action="store_true")
+    parser.add_argument("--require-incremental-tokens", action="store_true")
     args = parser.parse_args()
     run_dir = args.run_dir
     failures, sessions = [], []
@@ -34,6 +48,17 @@ def main():
             failures.append(f"{path.name}: rollout_error")
         if not requests or len(requests) != len(tokens) or len(tokens) != len(turns):
             failures.append(f"{path.name}: missing generation/turn events")
+        if not (
+            [event.get("generation_id") for event in requests]
+            == [event.get("generation_id") for event in tokens]
+            == [event.get("generation_id") for event in turns]
+        ):
+            failures.append(f"{path.name}: generation/turn IDs are not aligned")
+        incremental = sample.get("tokenization") == "incremental"
+        if incremental:
+            failures.extend(f"{path.name}: {error}" for error in incremental_prefix_errors(tokens))
+        elif args.require_incremental_tokens:
+            failures.append(f"{path.name}: missing incremental tokenization marker (legacy trace)")
         if len(evaluations) != 1 or len(completions) != 1:
             failures.append(f"{path.name}: missing/duplicate evaluation or completion")
             continue
@@ -52,6 +77,8 @@ def main():
             "source_split": sample.get("source_split", sample.get("split")),
             "task_id": sample["task_id"],
             "turns": len(turns),
+            "tokenization": sample.get("tokenization", "legacy"),
+            "incremental_transitions": max(0, len(tokens) - 1) if incremental else 0,
             "generated_tokens": sum(len(event["response_ids"]) for event in tokens),
             "tool_results": sum(len(event["tool_results"]) for event in turns),
             "tool_errors": sum(is_tool_error(result) for event in turns for result in event["tool_results"]),
@@ -67,6 +94,8 @@ def main():
         failures.append("A GRPO training group has fewer than two samples")
     if not sum(session["tool_results"] for session in sessions):
         failures.append("Student rollouts did not execute any Pi tools")
+    if args.require_incremental_tokens and not sum(session["incremental_transitions"] for session in sessions):
+        failures.append("No multi-turn incremental generation to audit")
     records = read_jsonl(run_dir / "metrics.jsonl")
     updates = [record for record in records if "actor/grad_norm" in record["data"]]
     if not updates:

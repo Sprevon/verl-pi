@@ -4,7 +4,7 @@
 import asyncio
 import importlib
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from hydra.utils import instantiate
@@ -12,8 +12,10 @@ from omegaconf import OmegaConf
 
 from verl.experimental.agent_loop import agent_loop, pi_agent_loop
 from verl.experimental.agent_loop.pi.recorder import PiTrainingRecorder, is_tool_error
+from verl.experimental.agent_loop.pi.token_context import PiTokenContext
 from verl.experimental.agent_loop.pi_agent_loop import PiAgentLoop
 from verl.experimental.agent_loop.tool_parser import FunctionCall
+from verl.utils.tokenizer.continuous_token import MergeResult
 
 
 def test_yaml_registration_survives_lazy_import_and_multiple_instances(monkeypatch, tmp_path):
@@ -127,8 +129,17 @@ def make_loop(tmp_path):
     )
     loop.tokenizer = SimpleNamespace(eos_token="<eos>", bos_token=None, pad_token=None)
     loop.continuous_token_builder = SimpleNamespace(
-        # Context can change its serialized prefix; each request remains an independent segment.
-        build_initial_tokens=lambda messages, tools: [1, 2] if len(messages) == 1 else [42, 43, 44]
+        build_initial_tokens=Mock(return_value=[1, 2]),
+        merge_assistant_tokens=Mock(
+            side_effect=lambda prefix, response: MergeResult(
+                token_ids=prefix + response, appended_token_count=len(response), kind="assistant"
+            )
+        ),
+        merge_context_tokens=Mock(
+            side_effect=lambda previous, updated, prefix, tools: MergeResult(
+                token_ids=prefix + [42, 43], appended_token_count=2, kind="context"
+            )
+        ),
     )
     loop.server_manager = SimpleNamespace(
         generate=AsyncMock(
@@ -151,7 +162,10 @@ def make_loop(tmp_path):
     loop.tool_parser = SimpleNamespace(
         stop_token_ids=[],
         extract_tool_calls=AsyncMock(
-            side_effect=[("<eos>", [FunctionCall(name="lookup", arguments="{}")]), ("Done<eos>", [])]
+            side_effect=[
+                ("<eos>", [FunctionCall(name="lookup", arguments="{}", tool_call_id="lookup0")]),
+                ("Done<eos>", []),
+            ]
         ),
     )
     loop.cwd = loop.agent_dir = str(tmp_path)
@@ -195,17 +209,37 @@ class ScriptedTransport:
             }
         ]
         request = {"type": "generation_request", "tools": tools}
+        assistant = {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "lookup0", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}
+            ],
+        }
         self.events = [
             {"type": "session_started"},
             {**request, "id": "r0", "generation_id": "g0", "messages": [{"role": "user", "content": "task"}]},
-            {"type": "step_complete", **completed(), "tool_results": [{"isError": False}]},
+            {
+                "type": "step_complete",
+                **completed(),
+                "assistant_message_openai": assistant,
+                "tool_results": [{"isError": False}],
+            },
             {
                 **request,
                 "id": "r1",
                 "generation_id": "g1",
-                "messages": [{"role": "user", "content": "task"}, {"role": "tool", "content": "observation"}],
+                "messages": [
+                    {"role": "user", "content": "task"},
+                    assistant,
+                    {"role": "tool", "tool_call_id": "lookup0", "name": "lookup", "content": "observation"},
+                ],
             },
-            {"type": "step_complete", **completed("g1")},
+            {
+                "type": "step_complete",
+                **completed("g1"),
+                "assistant_message_openai": {"role": "assistant", "content": "Done"},
+            },
             {"type": "evaluation_result", "result": {"reward": 0.75}},
             {"type": "session_complete", "turns": 2, "terminated": True, "truncated": False},
         ]
@@ -230,7 +264,7 @@ async def test_two_pi_turns_keep_actual_tokens_group_metadata_and_reward(monkeyp
     outputs = await loop.run(sampling_params, extra_info={"task_id": "task0"}, uid="group0")
     assert len(outputs) == 2
     assert outputs[0].prompt_ids == [1, 2]
-    assert outputs[1].prompt_ids == [42, 43, 44]
+    assert outputs[1].prompt_ids == [1, 2, 7, 8, 9, 42, 43]
     assert outputs[0].response_ids == [7, 8, 9]
     assert outputs[1].response_ids == [10, 11]
     assert [output.response_mask for output in outputs] == [[1, 1, 1], [1, 1]]
@@ -238,11 +272,20 @@ async def test_two_pi_turns_keep_actual_tokens_group_metadata_and_reward(monkeyp
     assert all(output.reward_score == 0.75 for output in outputs)
     assert outputs[0].extra_fields["pi_session_id"] == outputs[1].extra_fields["pi_session_id"]
     assert outputs[1].extra_fields["pi_step_index"] == 1
+    assert all(output.extra_fields["pi_tokenization"] == "incremental" for output in outputs)
     assert outputs[0].extra_fields["reward_extra_info"]["pi_tool_calls"] == 1
     assert sampling_params == {"temperature": 1.0, "logprobs": True}
     requests = loop.server_manager.generate.call_args_list
     assert requests[0].kwargs["request_id"] == requests[1].kwargs["request_id"]
     assert requests[0].kwargs["sampling_params"]["max_tokens"] == 3
+    assert [request.kwargs["prompt_ids"] for request in requests] == [output.prompt_ids for output in outputs]
+    loop.continuous_token_builder.build_initial_tokens.assert_called_once()
+    assert loop.continuous_token_builder.merge_assistant_tokens.call_count == 2
+    loop.continuous_token_builder.merge_context_tokens.assert_called_once()
+    merge = loop.continuous_token_builder.merge_context_tokens.call_args
+    assert merge.args[0][-1]["role"] == "assistant"
+    assert merge.args[1][-1]["role"] == "tool"
+    assert merge.args[2] == outputs[0].prompt_ids + outputs[0].response_ids
     transport = ScriptedTransport.instances[-1]
     assert transport.closed
     assert transport.options["env"]["TASK_ID"] == "task0"
@@ -260,11 +303,29 @@ async def test_missing_evaluation_fails_and_closes_sidecar(monkeypatch, tmp_path
 
 
 @pytest.mark.asyncio
+async def test_rewritten_history_stops_before_next_model_call(monkeypatch, tmp_path):
+    class RewritingTransport(ScriptedTransport):
+        async def start(self, payload, timeout):
+            await super().start(payload, timeout)
+            request = next(event for event in self.events if event.get("generation_id") == "g1")
+            request["messages"][0] = {"role": "user", "content": "rewritten task"}
+
+    monkeypatch.setattr("verl.experimental.agent_loop.pi_agent_loop.PiSidecarClient", RewritingTransport)
+    loop = make_loop(tmp_path)
+    with pytest.raises(ValueError, match="history changed"):
+        await loop.run({}, extra_info={"task_id": "task0"})
+    loop.server_manager.generate.assert_awaited_once()
+    loop.continuous_token_builder.build_initial_tokens.assert_called_once()
+    loop.continuous_token_builder.merge_context_tokens.assert_not_called()
+    assert RewritingTransport.instances[-1].closed
+
+
+@pytest.mark.asyncio
 async def test_overlong_canonical_prompt_is_not_truncated(tmp_path):
     loop = make_loop(tmp_path)
     loop.rollout_config.prompt_length = 1
     with pytest.raises(ValueError, match="canonical context was not truncated"):
-        await loop._prompt_tokens([{"role": "user", "content": "task"}], [])
+        await loop._prompt_tokens([{"role": "user", "content": "task"}], [], PiTokenContext(loop.continuous_token_builder))
     loop.server_manager.generate.assert_not_called()
 
 

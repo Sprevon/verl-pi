@@ -16,16 +16,23 @@ from uuid import uuid4
 
 import pandas as pd
 import torch
-from transformers import AutoTokenizer
+from transformers import AutoConfig, AutoTokenizer
 
 from verl.experimental.agent_loop.pi.client import PiSidecarClient
 from verl.experimental.agent_loop.pi.recorder import is_tool_error
-from verl.utils.tokenizer.tokenizer import normalize_token_ids
+from verl.experimental.agent_loop.pi.token_context import PiTokenContext
+from verl.utils.tokenizer.continuous_token_wiring import create_continuous_token_builder
 
 
 async def probe(task_id, model_path, max_prompt_length):
     project = Path(__file__).resolve().parents[3]
     tokenizer = AutoTokenizer.from_pretrained(model_path, local_files_only=True)
+    model_config = AutoConfig.from_pretrained(model_path, local_files_only=True)
+    token_context = PiTokenContext(
+        create_continuous_token_builder(
+            tokenizer, hf_model_type=model_config.model_type, chat_template_kwargs={"enable_thinking": False}
+        )
+    )
     client = PiSidecarClient(
         node_binary=os.environ["PI_NODE_BINARY"],
         entrypoint=str(project / "verl/experimental/agent_loop/pi/sidecar/main.mjs"),
@@ -53,11 +60,7 @@ async def probe(task_id, model_path, max_prompt_length):
                 count += 1
                 tools = event["tools"]
                 tool_count = len(tools)
-                ids = normalize_token_ids(
-                    tokenizer.apply_chat_template(
-                        event["messages"], tools=tools, add_generation_prompt=True, enable_thinking=False
-                    )
-                )
+                ids = token_context.build_prompt(event["messages"], tools)
                 if not ids or not all(isinstance(token, int) for token in ids):
                     raise ValueError("Canonical Pi prompt did not produce a flat token ID sequence")
                 lengths.append(len(ids))
@@ -77,8 +80,17 @@ async def probe(task_id, model_path, max_prompt_length):
                     reply = {"text": "", "tool_calls": [{"id": "probe-read", "name": name, "arguments": {}}]}
                 else:
                     reply = {"text": "The environment connectivity probe is complete.", "tool_calls": []}
+                # This lifecycle probe supplies scripted Hermes tokens, never
+                # student samples. Reuse the production incremental state machine.
+                scripted_text = reply["text"]
+                for call in reply["tool_calls"]:
+                    body = json.dumps({"name": call["name"], "arguments": call["arguments"]}, ensure_ascii=False)
+                    scripted_text += f"<tool_call>\n{body}\n</tool_call>"
+                scripted_ids = tokenizer.encode(scripted_text + (tokenizer.eos_token or ""), add_special_tokens=False)
+                token_context.record_generation(event["generation_id"], scripted_ids, reply)
                 await client.respond(event["id"], reply)
             elif event["type"] == "step_complete":
+                token_context.complete_turn(event)
                 completed += 1
                 results.extend(event["tool_results"])
             elif event["type"] == "evaluation_result":
@@ -96,6 +108,7 @@ async def probe(task_id, model_path, max_prompt_length):
             "tool_count": tool_count,
             "tools_used": tools_used,
             "prompt_token_lengths": lengths,
+            "tokenization": "incremental",
             "evaluator_reward": evaluation["reward"],
             "probe_uses_scripted_generation": True,
         }

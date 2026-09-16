@@ -3,8 +3,8 @@
 """Train real Pi coding-agent turns with verl's native v1 GRPO pipeline.
 
 Each output contains the exact prompt and response from one generation request.
-Previous assistant/tool messages are conditioning context in later outputs, never
-reconstructed response targets. Pi alone runs tools and decides the next turn.
+Sampled assistant tokens are preserved in later prompts through native Continuous
+Token merges. Pi alone runs tools and decides the next turn.
 """
 
 import asyncio
@@ -18,6 +18,7 @@ from uuid import uuid4
 from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopMetrics, AgentLoopOutput
 from verl.experimental.agent_loop.pi.client import PiSidecarClient, PiSidecarError
 from verl.experimental.agent_loop.pi.recorder import PiTrainingRecorder, is_tool_error
+from verl.experimental.agent_loop.pi.token_context import PiTokenContext
 from verl.experimental.agent_loop.tool_parser import ToolParser
 from verl.tools.schemas import OpenAIFunctionToolSchema
 from verl.trainer.distillation import is_distillation_enabled
@@ -89,12 +90,10 @@ class PiAgentLoop(AgentLoopBase):
         self.trace_dir = trace_dir
         self.tool_parser = ToolParser.get_tool_parser(self.rollout_config.multi_turn.format, self.tokenizer)
 
-    async def _prompt_tokens(self, messages, tools):
-        # A fresh, independent training segment represents the actual Pi context.
-        # Do not use the helper that silently left-truncates long text prompts.
-        prompt_ids = await self.loop.run_in_executor(
-            None, lambda: self.continuous_token_builder.build_initial_tokens(messages, tools=tools)
-        )
+    async def _prompt_tokens(self, messages, tools, token_context):
+        # Initial encoding once per trajectory; subsequent turns preserve sampled
+        # assistant tokens and only encode appended context, as in ToolAgentLoop.
+        prompt_ids = await self.loop.run_in_executor(None, lambda: token_context.build_prompt(messages, tools))
         if len(prompt_ids) > self.rollout_config.prompt_length:
             raise ValueError(
                 f"Pi prompt has {len(prompt_ids)} tokens, exceeding rollout.prompt_length="
@@ -102,11 +101,11 @@ class PiAgentLoop(AgentLoopBase):
             )
         return prompt_ids
 
-    async def _generate(self, event, sampling_params, request_id, recorder):
+    async def _generate(self, event, sampling_params, request_id, recorder, token_context):
         messages, tools = event.get("messages"), event.get("tools")
         if not isinstance(messages, list) or not isinstance(tools, list):
             raise PiSidecarError("Pi generation_request must contain messages and tools arrays")
-        prompt_ids = await self._prompt_tokens(messages, tools)
+        prompt_ids = await self._prompt_tokens(messages, tools, token_context)
         budget = int(self.rollout_config.response_length)
         if self.rollout_config.max_model_len:
             budget = min(budget, int(self.rollout_config.max_model_len) - len(prompt_ids))
@@ -155,7 +154,9 @@ class PiAgentLoop(AgentLoopBase):
         for special in (self.tokenizer.eos_token, self.tokenizer.bos_token, self.tokenizer.pad_token):
             if special and text:
                 text = text.replace(special, "")
-        return {"text": text, "tool_calls": payload, "stop_reason": "toolUse" if payload else "stop"}, turn
+        result = {"text": text, "tool_calls": payload, "stop_reason": "toolUse" if payload else "stop"}
+        token_context.record_generation(str(event["generation_id"]), response_ids, result)
+        return result, turn
 
     async def run(self, sampling_params: dict, **kwargs) -> list[AgentLoopOutput]:
         extra_info = _as_dict(kwargs.get("extra_info"))
@@ -168,6 +169,7 @@ class PiAgentLoop(AgentLoopBase):
             environment[self.task_id_env] = task_id
         client = PiSidecarClient(node_binary=self.node_binary, entrypoint=self.sidecar_entrypoint, env=environment)
         recorder = PiTrainingRecorder()
+        token_context = PiTokenContext(self.continuous_token_builder)
         evaluation = completion = None
         trace = None
         if self.trace_dir:
@@ -188,6 +190,7 @@ class PiAgentLoop(AgentLoopBase):
                 "session_id": session_id,
                 "split": extra_info.get("split"),
                 "source_split": extra_info.get("source_split", extra_info.get("split")),
+                "tokenization": "incremental",
             }
         )
         try:
@@ -214,7 +217,7 @@ class PiAgentLoop(AgentLoopBase):
                 if event_type == "generation_request":
                     if evaluation is not None or len(recorder.turns) >= self.max_turns:
                         raise PiSidecarError("Pi requested generation after its terminal boundary")
-                    result, turn = await self._generate(event, sampling_params, session_id, recorder)
+                    result, turn = await self._generate(event, sampling_params, session_id, recorder, token_context)
                     record_trace(
                         {
                             "type": "generation_tokens",
@@ -230,6 +233,7 @@ class PiAgentLoop(AgentLoopBase):
                     if evaluation is not None:
                         raise PiSidecarError("Pi completed a turn after its terminal evaluation")
                     recorder.complete_turn(event)
+                    token_context.complete_turn(event)
                 elif event_type == "evaluation_result":
                     if evaluation is not None:
                         raise PiSidecarError("Pi returned duplicate terminal evaluations")
@@ -275,6 +279,7 @@ class PiAgentLoop(AgentLoopBase):
                     "pi_generation_id": turn.generation_id,
                     "pi_step_index": index,
                     "pi_task_id": task_id,
+                    "pi_tokenization": "incremental",
                     "pi_terminated": bool(completion.get("terminated")),
                     "pi_truncated": bool(completion.get("truncated")),
                     "reward_extra_info": dict(reward_info),

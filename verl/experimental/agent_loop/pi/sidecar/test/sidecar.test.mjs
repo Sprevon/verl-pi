@@ -29,7 +29,7 @@ async function scenario({ missingEvaluation = false } = {}) {
           const event = JSON.parse(line);
           events.push(event);
           if (event.type === "ready") {
-            assert.equal(event.protocol_version, 2);
+            assert.equal(event.protocol_version, 3);
             send({
               type: "start_session", session_id: "session0", task_id: "fixture", cwd: directory,
               agent_dir: join(directory, "agent"), max_turns: 3,
@@ -64,9 +64,20 @@ async function scenario({ missingEvaluation = false } = {}) {
 
 test("real Pi SDK runs a tool and evaluates before session completion", async () => {
   const events = await scenario();
-  assert.equal(events.filter((event) => event.type === "generation_request").length, 2);
+  const requests = events.filter((event) => event.type === "generation_request");
+  assert.equal(requests.length, 2);
   const turns = events.filter((event) => event.type === "step_complete");
   assert.equal(turns.length, 2);
+  assert.deepEqual(turns.map((turn) => turn.generation_id), requests.map((request) => request.generation_id));
+  assert.deepEqual(turns[0].assistant_message_openai, {
+    role: "assistant", content: "",
+    tool_calls: [{ id: "probe0", type: "function", function: { name: "probe", arguments: '{"value":7}' } }],
+  });
+  assert.deepEqual(
+    requests[1].messages.find((message) => message.role === "assistant"),
+    turns[0].assistant_message_openai,
+  );
+  assert.deepEqual(turns[1].assistant_message_openai, { role: "assistant", content: "Done" });
   assert.equal(turns[0].tool_results[0].content[0].text, "probe:14");
   const evaluation = events.findIndex((event) => event.type === "evaluation_result");
   const completion = events.findIndex((event) => event.type === "session_complete");

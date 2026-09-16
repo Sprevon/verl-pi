@@ -367,11 +367,14 @@ async function createSession(command) {
       invalid_action: false,
       diagnostics: { ...state.diagnostics },
       assistant_message: serializable(event.message),
+      // Use the same conversion as the next generation_request. This identifies
+      // the exact assistant message backed by the host's sampled token IDs.
+      assistant_message_openai: contextToOpenAi({ messages: [event.message] }).messages[0],
       tool_results: serializable(event.toolResults ?? []),
     });
   });
 
-  emit({ type: "session_started", session_id: id, protocol_version: 2, runtime: "pi-coding-agent" });
+  emit({ type: "session_started", session_id: id, protocol_version: 3, runtime: "pi-coding-agent" });
   try {
     await session.bindExtensions({
       mode: "rpc",
@@ -487,6 +490,6 @@ input.on("line", (line) => {
   });
 });
 
-emit({ type: "ready", protocol_version: 2, pi_runtime: "pi-coding-agent" });
+emit({ type: "ready", protocol_version: 3, pi_runtime: "pi-coding-agent" });
 
 export { canonicalAnchor, contextToOpenAi, makeAssistantMessage };
