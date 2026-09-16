@@ -32,9 +32,37 @@ const BRIDGE_MODEL = {
 const sessions = new Map();
 const pendingHostRequests = new Map();
 let requestSequence = 0;
+let nodeReadyUnix = 0;
+const startupProfile = process.env.PI_STARTUP_PROFILE === "1";
 
 function emit(payload) {
   process.stdout.write(`${JSON.stringify(payload)}\n`);
+}
+
+function startupSpan(sessionId, phase) {
+  if (!startupProfile) return () => {};
+  const started = performance.now();
+  const startUnix = (performance.timeOrigin + started) / 1000;
+  return (fields = {}) => {
+    const duration = (performance.now() - started) / 1000;
+    emit({
+      type: "startup_timing", source: "node", pid: process.pid,
+      session_id: sessionId, phase, start_unix_s: startUnix,
+      end_unix_s: startUnix + duration, duration_s: duration, ...fields,
+    });
+  };
+}
+
+async function startupAsync(sessionId, phase, fn) {
+  const finish = startupSpan(sessionId, phase);
+  try { return await fn(); }
+  finally { finish(); }
+}
+
+function startupSync(sessionId, phase, fn) {
+  const finish = startupSpan(sessionId, phase);
+  try { return fn(); }
+  finally { finish(); }
 }
 
 function errorMessage(error) {
@@ -210,6 +238,13 @@ function serializable(value) {
 
 async function createSession(command) {
   const id = String(command.session_id);
+  if (startupProfile) {
+    emit({
+      type: "startup_timing", source: "node", pid: process.pid,
+      session_id: id, phase: "node.ready", start_unix_s: nodeReadyUnix,
+      end_unix_s: nodeReadyUnix, duration_s: 0,
+    });
+  }
   if (sessions.size > 0) {
     throw new Error(
       "Run one Pi sidecar per trajectory to isolate extension and environment state",
@@ -229,7 +264,7 @@ async function createSession(command) {
     command.pi_coding_agent_entrypoint ?? process.env.PI_CODING_AGENT_ENTRYPOINT ?? "",
   );
   const { createAgentSession, DefaultResourceLoader, ModelRuntime, SessionManager, SettingsManager } =
-    await loadCodingAgent(entrypoint);
+    await startupAsync(id, "pi.sdk_import", () => loadCodingAgent(entrypoint));
 
   if (!taskId) throw new Error("start_session.task_id is required");
 
@@ -253,22 +288,31 @@ async function createSession(command) {
   };
   sessions.set(id, state);
 
-  const resourceLoader = new DefaultResourceLoader({
+  const resourceLoader = startupSync(id, "pi.resource_loader_ctor", () => new DefaultResourceLoader({
     cwd,
     agentDir,
     noExtensions: true,
     additionalExtensionPaths: [trainingExtension],
-  });
-  await resourceLoader.reload();
+  }));
+  if (startupProfile) {
+    // Profiling-only hook for the pinned SDK. Keep reload's real loading path.
+    if (typeof resourceLoader.loadFinalExtensionSet !== "function") {
+      throw new Error("Startup profiling requires ResourceLoader.loadFinalExtensionSet (Pi 0.84.4)");
+    }
+    const loadExtensions = resourceLoader.loadFinalExtensionSet.bind(resourceLoader);
+    resourceLoader.loadFinalExtensionSet = (...args) =>
+      startupAsync(id, "pi.extension_load", () => loadExtensions(...args));
+  }
+  await startupAsync(id, "pi.resource_loader_reload", () => resourceLoader.reload());
   const extensionErrors = resourceLoader.getExtensions().errors ?? [];
   if (extensionErrors.length > 0) {
     throw new Error(`Pi extension loading failed: ${JSON.stringify(extensionErrors)}`);
   }
 
-  const modelRuntime = await ModelRuntime.create({ modelsPath: null });
+  const modelRuntime = await startupAsync(id, "pi.model_runtime_create", () => ModelRuntime.create({ modelsPath: null }));
   modelRuntime.registerNativeProvider(createBridgeProvider());
 
-  const { session } = await createAgentSession({
+  const { session } = await startupAsync(id, "pi.create_agent_session", () => createAgentSession({
     cwd,
     agentDir,
     model: BRIDGE_MODEL,
@@ -281,13 +325,16 @@ async function createSession(command) {
       compaction: { enabled: false },
       retry: { enabled: false },
     }),
-  });
+  }));
   state.session = session;
+  let finishPromptPreparation = null;
   session.agent.streamFunction = (_model, context, options) => {
+    finishPromptPreparation?.();
+    finishPromptPreparation = null;
     const generationId = `${id}:generation:${++state.turnCount}`;
     state.currentGenerationId = generationId;
     state.diagnostics.generation_requests += 1;
-    const converted = contextToOpenAi(context);
+    const converted = startupSync(id, "pi.provider_context_conversion", () => contextToOpenAi(context));
     const stream = createAssistantMessageEventStream();
     const abortSignal = options?.signal;
     const fail = (error, aborted = false) => {
@@ -346,6 +393,7 @@ async function createSession(command) {
           state.extensionErrors.push("Training extension returned an empty task prompt");
         } else {
           state.taskPrompt = prompt;
+          startupSpan(id, "pi.canonical_prompt_published")();
         }
       }
     }
@@ -404,16 +452,17 @@ async function createSession(command) {
 
   emit({ type: "session_started", session_id: id, protocol_version: 3, runtime: "pi-coding-agent" });
   try {
-    await session.bindExtensions({
+    await startupAsync(id, "pi.bind_extensions", () => session.bindExtensions({
       mode: "rpc",
       onError: (error) => state.extensionErrors.push(serializable(error)),
-    });
+    }));
     if (state.extensionErrors.length > 0) {
       throw new Error(`Pi extension startup failed: ${JSON.stringify(state.extensionErrors)}`);
     }
     if (!state.taskPrompt) {
       throw new Error("Training extension did not publish the canonical task prompt");
     }
+    finishPromptPreparation = startupSpan(id, "pi.prompt_to_first_provider");
     await session.prompt(state.taskPrompt, { expandPromptTemplates: true });
     if (state.extensionErrors.length > 0) {
       throw new Error(`Pi extension runtime failed: ${JSON.stringify(state.extensionErrors)}`);
@@ -526,6 +575,7 @@ input.on("line", (line) => {
   });
 });
 
+nodeReadyUnix = (performance.timeOrigin + performance.now()) / 1000;
 emit({ type: "ready", protocol_version: 3, pi_runtime: "pi-coding-agent" });
 
 export { canonicalAnchor, contextToOpenAi, makeAssistantMessage };

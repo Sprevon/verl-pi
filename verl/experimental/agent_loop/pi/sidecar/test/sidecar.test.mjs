@@ -11,7 +11,7 @@ async function scenario({ missingEvaluation = false } = {}) {
   const directory = await mkdtemp(join(tmpdir(), "verl-pi-test-"));
   const child = spawn(process.execPath, [fileURLToPath(new URL("../main.mjs", import.meta.url))], {
     stdio: ["pipe", "pipe", "pipe"],
-    env: { ...process.env, PI_FIXTURE_EVALUATION: missingEvaluation ? "missing" : "present" },
+    env: { ...process.env, PI_STARTUP_PROFILE: "1", PI_FIXTURE_EVALUATION: missingEvaluation ? "missing" : "present" },
   });
   let stderr = "";
   child.stderr.on("data", (data) => { stderr += data; });
@@ -91,6 +91,13 @@ test("real Pi SDK runs a tool and evaluates before session completion", async ()
   assert.equal(events[evaluation].result.reward, 1);
   assert.equal(events[completion].turns, 2);
   assert.ok(events[completion].evaluation_timing.duration_s >= 0);
+  const spans = events.filter((event) => event.type === "startup_timing");
+  const reload = spans.find((span) => span.phase === "pi.resource_loader_reload");
+  const extension = spans.find((span) => span.phase === "pi.extension_load");
+  assert.ok(extension.start_unix_s >= reload.start_unix_s);
+  assert.ok(extension.end_unix_s <= reload.end_unix_s);
+  assert.equal(spans.filter((span) => span.phase === "pi.prompt_to_first_provider").length, 1);
+  assert.ok(spans.every((span) => span.duration_s >= 0 && span.session_id === "session0"));
 });
 
 test("real Pi SDK session fails when the extension omits its evaluator result", async () => {

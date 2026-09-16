@@ -252,7 +252,7 @@ class PiAgentLoop(AgentLoopBase):
                     waiting["next_event_type"] = event.get("type")
                 record_trace(event)
                 event_type = event.get("type")
-                if event_type in {"session_started", "session_info"}:
+                if event_type in {"session_started", "session_info", "startup_timing"}:
                     continue
                 if event_type == "generation_request":
                     if evaluation is not None or len(recorder.turns) >= self.max_turns:

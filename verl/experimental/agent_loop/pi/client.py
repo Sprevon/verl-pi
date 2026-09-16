@@ -39,7 +39,7 @@ class PiSidecarClient:
             stdin=asyncio.subprocess.PIPE,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            env={**os.environ, **self.env},
+            env={**os.environ, **self.env, "PI_TIMING_SESSION_ID": self.session_id},
             limit=16 * 1024 * 1024,
             start_new_session=True,
         )

@@ -10,6 +10,9 @@
   environment:
     TAU2_PI_PYTHON: ${oc.env:TAU2_PI_PYTHON}
     TAU2_SOLO_MODE: "1"
+    PI_STARTUP_PROFILE: ${oc.env:PI_STARTUP_PROFILE,"0"}
+    PI_STARTUP_TRACE_DIR: ${oc.env:PI_STARTUP_TRACE_DIR,""}
+    TAU2_PI_REAL_PYTHON: ${oc.env:TAU2_PI_REAL_PYTHON,""}
   max_turns: ${oc.env:PI_MAX_TURNS,6}
   event_timeout: 300
   generation_timeout: 600
