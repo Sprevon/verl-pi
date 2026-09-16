@@ -120,7 +120,9 @@ def trajectory(path):
                 result = results.get(tool["tool_call_id"], {})
                 details = result.get("details")
                 row["is_error"] = bool(
-                    tool.get("is_error") or result.get("isError") or (isinstance(details, dict) and details.get("error"))
+                    tool.get("is_error")
+                    or result.get("isError")
+                    or (isinstance(details, dict) and details.get("error"))
                 )
                 rows.append(row)
     if completion and "evaluation_timing" in completion:
@@ -199,10 +201,12 @@ def summarize(directory):
                 else None,
                 "gpu_sample_count": len(samples),
                 "sampled_server_running_max": max(
-                    (row["num_requests_running"] for row in server_window if "num_requests_running" in row), default=None
+                    (row["num_requests_running"] for row in server_window if "num_requests_running" in row),
+                    default=None,
                 ),
                 "sampled_server_waiting_max": max(
-                    (row["num_requests_waiting"] for row in server_window if "num_requests_waiting" in row), default=None
+                    (row["num_requests_waiting"] for row in server_window if "num_requests_waiting" in row),
+                    default=None,
                 ),
             }
         )
@@ -218,7 +222,7 @@ def summarize(directory):
         f"Commit: `{result['metadata']['commit']}`",
         "",
         "LLM request latency includes RPC, routing, queueing, prefill and decode; it is not GPU kernel time.",
-        "GPU values are sampled nvidia-smi utilization, not useful-compute efficiency. Tool wall time uses interval unions.",
+        "GPU readings are sampled utilization, not useful-compute efficiency. Tool time uses interval unions.",
         "",
         "| Group | Split | Trajectories | Wall s | LLM union s | Request presence % | Mean sampled GPU % |",
         "|---|---|---:|---:|---:|---:|---:|",
