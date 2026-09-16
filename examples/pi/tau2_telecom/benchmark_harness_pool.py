@@ -80,6 +80,7 @@ def config_for(project, model):
         "actor_rollout_ref.rollout.tensor_model_parallel_size=1",
         "actor_rollout_ref.rollout.gpu_memory_utilization=0.45",
         "actor_rollout_ref.rollout.enforce_eager=true",
+        "actor_rollout_ref.rollout.load_format=safetensors",
         "actor_rollout_ref.rollout.max_num_seqs=4",
         "actor_rollout_ref.rollout.max_num_batched_tokens=4096",
         "actor_rollout_ref.rollout.max_model_len=24832",
@@ -100,6 +101,8 @@ def config_for(project, model):
 async def benchmark(args):
     project = Path(__file__).resolve().parents[3]
     config = config_for(project, args.model)
+    if config.actor_rollout_ref.rollout.load_format == "dummy":
+        raise ValueError("A standalone benchmark must load real checkpoint weights")
     args.run_dir.mkdir(parents=True, exist_ok=True)
     OmegaConf.save(config, args.run_dir / "benchmark-config.yaml")
     ray.init(num_cpus=8, include_dashboard=False)

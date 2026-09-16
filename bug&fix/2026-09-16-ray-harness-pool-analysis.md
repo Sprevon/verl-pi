@@ -26,3 +26,7 @@
 ## 首次对照入口异常（修复前记录）
 
 `pi-harness-20260916-c` 的 vLLM standalone 初始化完成，但 BenchmarkWorker 在首批 GPU warmup 创建轨迹之前报 `KeyError: 'pi_agent'`。原生 Worker 构造时向其模块注册表加载了 YAML，而定义在脚本入口的实验 Actor 将 `from ... import _agent_loop_registry` 的字典作为序列化全局值携带，读到旧副本。需要在 Actor 方法执行时从原生模块读取 registry，避免跨 Ray 序列化复制可变注册表。该次没有任何可用于速度比较的完成轨迹，不纳入性能结果。GPU 已释放为 0%、1 MiB。
+
+## 独立推理权重加载配置异常（修复前记录）
+
+`pi-harness-20260916-d` 的启动日志显示 `load_format=dummy`。默认训练 rollout 随后由 actor 同步权重，但独立 benchmark 没有该步骤。因此即使它能生成，也不能作为真实 checkpoint 的性能证据。发现后停止这一个自有实验，显式覆盖 rollout.load_format 并增加启动配置断言，然后使用新目录重跑。c/d 两轮均不进入有效结果。
