@@ -17,3 +17,6 @@
   event_timeout: 300
   generation_timeout: 600
   trace_dir: ${oc.env:PI_TRACE_DIR}
+  harness_pool_name: ${oc.env:PI_HARNESS_POOL_NAME,""}
+  harness_pool_size: ${oc.env:PI_HARNESS_POOL_SIZE,0}
+  harness_cpus_per_actor: ${oc.env:PI_HARNESS_CPUS_PER_ACTOR,1}

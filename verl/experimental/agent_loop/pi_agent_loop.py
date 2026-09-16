@@ -70,9 +70,17 @@ class PiAgentLoop(AgentLoopBase):
         event_timeout: float = 300,
         generation_timeout: float = 600,
         trace_dir: str | None = None,
+        harness_pool_name: str = "",
+        harness_pool_size: int = 0,
+        harness_cpus_per_actor: float = 1,
         **kwargs,
     ):
         super().__init__(*args, **kwargs)
+        self.harness_pool_name = harness_pool_name
+        self.harness_pool_size = int(harness_pool_size)
+        self.harness_cpus_per_actor = float(harness_cpus_per_actor)
+        if self.harness_pool_size < 0 or (self.harness_pool_size and not harness_pool_name):
+            raise ValueError("A positive Harness capacity requires an experiment-scoped pool name")
         max_turns = int(max_turns)
         event_timeout = float(event_timeout)
         generation_timeout = float(generation_timeout)
@@ -198,7 +206,23 @@ class PiAgentLoop(AgentLoopBase):
         environment = dict(self.environment)
         if self.task_id_env:
             environment[self.task_id_env] = task_id
-        client = PiSidecarClient(node_binary=self.node_binary, entrypoint=self.sidecar_entrypoint, env=environment)
+        if self.harness_pool_size:
+            from verl.experimental.agent_loop.pi.harness_pool import RayHarnessClient
+
+            client = RayHarnessClient(
+                pool_name=self.harness_pool_name,
+                pool_size=self.harness_pool_size,
+                cpus_per_actor=self.harness_cpus_per_actor,
+                config={
+                    "node_binary": self.node_binary,
+                    "entrypoint": self.sidecar_entrypoint,
+                    "cwd": self.cwd,
+                    "env": self.environment,
+                },
+                env=environment,
+            )
+        else:
+            client = PiSidecarClient(node_binary=self.node_binary, entrypoint=self.sidecar_entrypoint, env=environment)
         recorder = PiTrainingRecorder()
         token_context = PiTokenContext(self.continuous_token_builder)
         evaluation = completion = None
@@ -228,6 +252,7 @@ class PiAgentLoop(AgentLoopBase):
                 "split": extra_info.get("split"),
                 "source_split": extra_info.get("source_split", extra_info.get("split")),
                 "tokenization": "incremental",
+                "harness_backend": "ray_pool" if self.harness_pool_size else "subprocess",
             }
         )
         try:
@@ -295,6 +320,8 @@ class PiAgentLoop(AgentLoopBase):
             try:
                 with _timed_phase(record_trace, "sidecar_close"):
                     await client.close()
+                if getattr(client, "final_status", None):
+                    record_trace({"type": "harness_released", "status": client.final_status})
             finally:
                 record_trace({"type": "session_closed", "session_id": session_id})
                 if trace:

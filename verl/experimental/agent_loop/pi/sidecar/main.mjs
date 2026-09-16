@@ -34,6 +34,10 @@ const pendingHostRequests = new Map();
 let requestSequence = 0;
 let nodeReadyUnix = 0;
 const startupProfile = process.env.PI_STARTUP_PROFILE === "1";
+if (process.env.PI_HARNESS_OWNER_PID) {
+  const owner = Number(process.env.PI_HARNESS_OWNER_PID);
+  setInterval(() => { if (process.ppid !== owner) process.exit(1); }, 1000).unref();
+}
 
 function emit(payload) {
   process.stdout.write(`${JSON.stringify(payload)}\n`);

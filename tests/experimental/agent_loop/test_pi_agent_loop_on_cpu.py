@@ -181,6 +181,7 @@ def make_loop(tmp_path):
     loop.max_turns = 4
     loop.event_timeout = loop.generation_timeout = 2
     loop.trace_dir = str(tmp_path / "traces")
+    loop.harness_pool_size = 0
     return loop
 
 
