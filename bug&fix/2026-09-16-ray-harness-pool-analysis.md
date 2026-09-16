@@ -22,3 +22,7 @@
 固定 Qwen3-1.7B、任务、并发 4、最多 6 turns、256 response tokens、greedy sampling。GPU 先单独预热；新旧模式交替运行多个 batch。Pool 创建/import 成本单独计量，并在累计成本中加回。保存首请求延迟、batch wall、请求区间并集、输出 tokens、reward/error/truncation，以及每槽位 PID/服务次数；不只报告热池速度。
 
 这是实验功能，不改 Tau2 SDK/业务源码，不改变同步策略版本语义。实际收益和未覆盖边界需在结果文档中据实记录。
+
+## 首次对照入口异常（修复前记录）
+
+`pi-harness-20260916-c` 的 vLLM standalone 初始化完成，但 BenchmarkWorker 在首批 GPU warmup 创建轨迹之前报 `KeyError: 'pi_agent'`。原生 Worker 构造时向其模块注册表加载了 YAML，而定义在脚本入口的实验 Actor 将 `from ... import _agent_loop_registry` 的字典作为序列化全局值携带，读到旧副本。需要在 Actor 方法执行时从原生模块读取 registry，避免跨 Ray 序列化复制可变注册表。该次没有任何可用于速度比较的完成轨迹，不纳入性能结果。GPU 已释放为 0%、1 MiB。

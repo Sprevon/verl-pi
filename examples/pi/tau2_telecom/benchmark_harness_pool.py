@@ -19,7 +19,7 @@ import ray
 from hydra import compose, initialize_config_dir
 from omegaconf import OmegaConf
 
-from verl.experimental.agent_loop.agent_loop import AgentLoopWorker, _agent_loop_registry
+from verl.experimental.agent_loop.agent_loop import AgentLoopWorker
 from verl.experimental.agent_loop.pi.harness_pool import get_pool
 from verl.workers.rollout.llm_server import LLMServerManager
 
@@ -30,9 +30,11 @@ class BenchmarkWorker(AgentLoopWorker):
         return output
 
     async def run_batch(self, task_id, uid, mode, concurrency, pool_name):
-        loop_config = OmegaConf.to_container(_agent_loop_registry["pi_agent"], resolve=True)
+        from verl.experimental.agent_loop import agent_loop
+
+        loop_config = OmegaConf.to_container(agent_loop._agent_loop_registry["pi_agent"], resolve=True)
         loop_config.update(harness_pool_size=concurrency if mode == "pool" else 0, harness_pool_name=pool_name)
-        _agent_loop_registry["pi_agent"] = OmegaConf.create(loop_config)
+        agent_loop._agent_loop_registry["pi_agent"] = OmegaConf.create(loop_config)
         started = perf_counter()
         trajectories = await asyncio.gather(
             *[
