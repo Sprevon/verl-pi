@@ -213,9 +213,7 @@ class ScriptedTransport:
         assistant = {
             "role": "assistant",
             "content": "",
-            "tool_calls": [
-                {"id": "lookup0", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}
-            ],
+            "tool_calls": [{"id": "lookup0", "type": "function", "function": {"name": "lookup", "arguments": "{}"}}],
         }
         self.events = [
             {"type": "session_started"},
@@ -336,7 +334,9 @@ async def test_overlong_canonical_prompt_is_not_truncated(tmp_path):
     loop = make_loop(tmp_path)
     loop.rollout_config.prompt_length = 1
     with pytest.raises(ValueError, match="canonical context was not truncated"):
-        await loop._prompt_tokens([{"role": "user", "content": "task"}], [], PiTokenContext(loop.continuous_token_builder))
+        await loop._prompt_tokens(
+            [{"role": "user", "content": "task"}], [], PiTokenContext(loop.continuous_token_builder)
+        )
     loop.server_manager.generate.assert_not_called()
 
 

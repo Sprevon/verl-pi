@@ -121,6 +121,22 @@ PI_DATA_DIR="$PI_WORK_ROOT/data/pi-tau2-small-smoke" PI_ROLLOUT_N=8 PI_MAX_TURNS
 诊断任务完成非零 GRPO 更新。详见 [实现、问题修复和完整运行结果](../../../bug&fix/2026-09-14-pi-agent-loop-resolution.md)。
 问题定位记录见 `bug&fix/2026-09-14-pi-agent-loop-analysis.md`。
 
-2026-09-15 的增量 token 改动目前仅完成本地编写，按用户要求暂未执行回归或重新跑单卡
-RL。上述 09-14 结果属于旧实现，不能作为新路径通过验证的证据。设计、测试清单与待验收项
+截至 2026-09-15，增量 token 改动仅完成本地编写，当时按用户要求未执行回归或重新跑单卡
+RL。上述 09-14 结果属于旧实现，不能作为新路径通过验证的证据。设计、测试清单与当时待验收项
 见 [增量 token 实现记录](../../../bug&fix/2026-09-15-pi-incremental-token-implementation.md)。
+
+## 真实轨迹计时
+
+在 vGPUN 执行 `bash examples/pi/tau2_telecom/run_timing.sh`，默认使用现有 Qwen3-1.7B、
+同一 canonical 训练任务的四条并发轨迹和一条验证轨迹。`PI_RUN_DIR` 必须使用新目录；
+模型可通过 `PI_PROFILE_MODEL` 覆盖，其他采样覆盖沿用 `run_single_card.sh`。
+
+该入口在原生训练链路上记录逐轮 tokenization、LLM request、真实工具执行、终局评估、
+Node 启动和清理，另采样 GPU utilization 与 vLLM `/metrics`。结果为
+`timing-summary.json`、`timing-report.md`、`gpu-samples.csv`、`server-samples.jsonl`；
+原始带时间戳的事件仍在 `pi-traces/`。
+
+LLM request 时间包含路由、排队、RPC 和推理，不是纯 GPU kernel 时间。
+跨轨迹请求覆盖率和并行工具 wall time 使用区间并集，避免重复计算。
+2026-09-16 已完成远程 34 个 Python 测试、2 个真实 Pi SDK 测试，以及五条真实 student
+轨迹的计时运行；本次每条均达到六轮上限、任务奖励为零，不能作为任务成功或学习提升证据。
