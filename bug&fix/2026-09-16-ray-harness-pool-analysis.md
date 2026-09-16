@@ -30,3 +30,5 @@
 ## 独立推理权重加载配置异常（修复前记录）
 
 `pi-harness-20260916-d` 的启动日志显示 `load_format=dummy`。默认训练 rollout 随后由 actor 同步权重，但独立 benchmark 没有该步骤。因此即使它能生成，也不能作为真实 checkpoint 的性能证据。发现后停止这一个自有实验，显式覆盖 rollout.load_format 并增加启动配置断言，然后使用新目录重跑。c/d 两轮均不进入有效结果。
+
+修复提交 `c76e10fd` 已 push，但远程 GitHub pull 超时，e 目录的启动仍读到旧提交 c6efe7a4；核对后在模型加载阶段中止。同一已发布提交改用增量 Git bundle 校验、fast-forward 拉取。后续 f 目录启动命令先断言完整 HEAD 等于 c76e10fd89d5baae6b1704a321d039a7648ff244。实际 vLLM 日志确认 `load_format=safetensors`、2/2 checkpoint shards 已加载。e 同样排除；仅成功完成且通过数据核对的运行进入结果。

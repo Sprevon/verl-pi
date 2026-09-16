@@ -141,3 +141,53 @@ LLM request 时间包含路由、排队、RPC 和推理，不是纯 GPU kernel �
 2026-09-16 已完成远程 34 个 Python 测试、2 个真实 Pi SDK 测试，以及五条真实 student
 轨迹的计时运行；本次每条均达到六轮上限、任务奖励为零，不能作为任务成功或学习提升证据。
 逐轮数据、占比口径与瓶颈边界见 [远程计时结果](../../../bug&fix/2026-09-16-pi-timing-bottleneck-results.md)。
+
+### 首次请求前的细分计时
+
+```bash
+PI_STARTUP_PROFILE=1 PI_RUN_DIR=/root/autodl-tmp/runs/pi-startup-new \
+  bash examples/pi/tau2_telecom/run_timing.sh
+```
+
+额外输出 `startup-report.md`、`startup-summary.json`、`startup-traces/`。
+记录真实 Pi SDK import、ResourceLoader ctor/reload、嵌套 extension load、ModelRuntime、
+createAgentSession、bindExtensions，以及 Python Tau2 package import、环境创建、task catalog、
+set_state、prompt 准备与首次 LLM client 调用。子阶段包含在父阶段内，不能直接相加。
+canonical prompt publication 是时刻标记；Pi solo 路径不调用 Tau2 agent/user simulator 的 init_state。
+
+2026-09-16 的五条轨迹复现了重复 `import tau2` 是主要开销：验证轨迹 12.090 s 的首次提交前
+时间中有 9.643 s 用于 Tau2 package import。详见
+[细分计时与测量边界](../../../bug&fix/2026-09-16-pi-startup-breakdown-results.md)。
+
+### 实验性 Ray Harness 资源池
+
+默认 `harness_pool_size=0` 保持原 subprocess 路径。设置 `PI_HARNESS_POOL_SIZE` 与本次作业
+独有的 `PI_HARNESS_POOL_NAME` 后，Worker 通过 Ray 租用有界 CPU Harness 槽位。
+每个槽位保留已导入 Tau2 的 Python runtime；每条轨迹仍新建 Node/Pi session，并由原始
+`pi_bridge.serve()` 新建 bridge/environment。Pi 控制 agent/tool loop，Worker 保留生成和 token
+记录。该后端目前针对 canonical Tau2 Telecom；多机需事先部署相同代码、解释器和数据路径。
+
+独立 rollout 对照入口（vGPUN）：
+
+```bash
+PI_RUN_DIR=/root/autodl-tmp/runs/pi-harness-new \
+  bash examples/pi/tau2_telecom/run_harness_benchmark.sh
+```
+
+该入口显式加载 Qwen3-1.7B safetensors 权重，使用原生 LLMServerManager、Worker 的
+`_run_agent_loop` 和 PiAgentLoop；只跳过训练数据后处理/TransferQueue 和 actor 更新。
+GPU 预热后在同一服务上运行 direct/pool/pool/direct/direct/pool 六批，每批四条轨迹，
+固定任务、greedy sampling、6 turns、256 response tokens。池启动开销单独计量且加回累计
+成本，不能把热池速度写成完整训练 step 加速。产物包括 `benchmark-summary.json`、
+逐轨迹 trace、GPU/server 采样和 `timing-report.md`。
+
+远程针对性回归已通过 36 个测试，包含真实 tokenizer，以及单槽位 admission、取消回收、
+旧租约拒绝、同一热解释器中修改状态后 A/B/A 任务切换与新进程的 prompt/tool/evaluator
+一致性。CPU lifecycle 用例的生成是脚本回复，仅用于语义回归；性能对照全部为 GPU 模型生成。
+设计、初次入口异常及权重配置问题见
+[资源池实验记录](../../../bug&fix/2026-09-16-ray-harness-pool-analysis.md)。
+
+有效单节点对照已完成：热池平均 7.222 s/批，原方案 20.219 s/批；加回 34.723 s 的池准备后，
+三批累计为 56.388 s 对 60.657 s。输出工作量略有差异，所有轨迹均为六轮截断、零 reward，
+不能写成任务成功或完整训练加速。完整数据、匹配工作量对照和边界见
+[资源池实测结果](../../../bug&fix/2026-09-16-ray-harness-pool-results.md)。
