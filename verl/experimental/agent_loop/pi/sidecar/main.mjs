@@ -242,6 +242,8 @@ async function createSession(command) {
     evaluation: null,
     taskPrompt: null,
     extensionErrors: [],
+    toolStarts: new Map(),
+    toolTimings: [],
     diagnostics: {
       generation_requests: 0,
       completed_turns: 0,
@@ -349,6 +351,31 @@ async function createSession(command) {
     }
   });
   session.agent.subscribe((event) => {
+    if (event.type === "tool_execution_start") {
+      state.toolStarts.set(event.toolCallId, {
+        name: event.toolName,
+        tool_call_id: event.toolCallId,
+        start_unix_s: Date.now() / 1000,
+        started: performance.now(),
+      });
+      return;
+    }
+    if (event.type === "tool_execution_end") {
+      const started = state.toolStarts.get(event.toolCallId);
+      if (started) {
+        const duration = (performance.now() - started.started) / 1000;
+        state.toolTimings.push({
+          name: started.name,
+          tool_call_id: started.tool_call_id,
+          start_unix_s: started.start_unix_s,
+          end_unix_s: started.start_unix_s + duration,
+          duration_s: duration,
+          is_error: Boolean(event.isError),
+        });
+        state.toolStarts.delete(event.toolCallId);
+      }
+      return;
+    }
     if (event.type !== "turn_end" || event.message?.role !== "assistant") return;
     const generationId = state.currentGenerationId;
     if (!generationId) return;
@@ -371,6 +398,7 @@ async function createSession(command) {
       // the exact assistant message backed by the host's sampled token IDs.
       assistant_message_openai: contextToOpenAi({ messages: [event.message] }).messages[0],
       tool_results: serializable(event.toolResults ?? []),
+      tool_timings: state.toolTimings.splice(0),
     });
   });
 
@@ -391,7 +419,10 @@ async function createSession(command) {
       throw new Error(`Pi extension runtime failed: ${JSON.stringify(state.extensionErrors)}`);
     }
     await session.waitForIdle();
+    const evaluationStarted = performance.now();
+    const evaluationUnix = Date.now() / 1000;
     await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
+    const evaluationDuration = (performance.now() - evaluationStarted) / 1000;
     if (state.extensionErrors.length > 0) {
       throw new Error(`Pi extension shutdown failed: ${JSON.stringify(state.extensionErrors)}`);
     }
@@ -407,6 +438,11 @@ async function createSession(command) {
         (state.turnCount >= state.maxTurns && !state.evaluation.terminated),
       turns: state.turnCount,
       diagnostics: { ...state.diagnostics },
+      evaluation_timing: {
+        start_unix_s: evaluationUnix,
+        end_unix_s: evaluationUnix + evaluationDuration,
+        duration_s: evaluationDuration,
+      },
     });
   } catch (error) {
     emit({ type: "session_error", session_id: id, error: errorMessage(error) });

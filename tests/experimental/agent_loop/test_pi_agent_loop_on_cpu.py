@@ -3,6 +3,7 @@
 
 import asyncio
 import importlib
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, Mock
 
@@ -290,7 +291,17 @@ async def test_two_pi_turns_keep_actual_tokens_group_metadata_and_reward(monkeyp
     assert transport.closed
     assert transport.options["env"]["TASK_ID"] == "task0"
     assert transport.replies[1][1]["text"] == "Done"
-    assert list((tmp_path / "traces").glob("*.jsonl"))
+    trace_file = next((tmp_path / "traces").glob("*.jsonl"))
+    events = [json.loads(line) for line in trace_file.read_text().splitlines()]
+    phases = [event for event in events if event["type"] == "phase_timing"]
+    generation_phases = [event for event in phases if event["phase"] == "llm_request"]
+    assert len(generation_phases) == len(outputs)
+    assert sum(event["duration_s"] for event in generation_phases) == pytest.approx(
+        sum(output.metrics.generate_sequences for output in outputs)
+    )
+    assert all(event["duration_s"] >= 0 for event in phases)
+    assert [event["trace_elapsed_s"] for event in events] == sorted(event["trace_elapsed_s"] for event in events)
+    assert events[-1]["type"] == "session_closed"
 
 
 @pytest.mark.asyncio

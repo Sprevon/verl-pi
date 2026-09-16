@@ -79,11 +79,18 @@ test("real Pi SDK runs a tool and evaluates before session completion", async ()
   );
   assert.deepEqual(turns[1].assistant_message_openai, { role: "assistant", content: "Done" });
   assert.equal(turns[0].tool_results[0].content[0].text, "probe:14");
+  assert.equal(turns[0].tool_timings.length, 1);
+  assert.equal(turns[0].tool_timings[0].name, "probe");
+  assert.equal(turns[0].tool_timings[0].tool_call_id, "probe0");
+  assert.ok(turns[0].tool_timings[0].duration_s >= 0);
+  assert.ok(turns[0].tool_timings[0].end_unix_s >= turns[0].tool_timings[0].start_unix_s);
+  assert.deepEqual(turns[1].tool_timings, []);
   const evaluation = events.findIndex((event) => event.type === "evaluation_result");
   const completion = events.findIndex((event) => event.type === "session_complete");
   assert.ok(evaluation > 0 && completion > evaluation);
   assert.equal(events[evaluation].result.reward, 1);
   assert.equal(events[completion].turns, 2);
+  assert.ok(events[completion].evaluation_timing.duration_s >= 0);
 });
 
 test("real Pi SDK session fails when the extension omits its evaluator result", async () => {

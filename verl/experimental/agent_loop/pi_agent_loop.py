@@ -11,8 +11,9 @@ import asyncio
 import json
 import os
 from collections.abc import Mapping
+from contextlib import contextmanager
 from pathlib import Path
-from time import perf_counter
+from time import perf_counter, time
 from uuid import uuid4
 
 from verl.experimental.agent_loop.agent_loop import AgentLoopBase, AgentLoopMetrics, AgentLoopOutput
@@ -34,6 +35,19 @@ def _as_dict(value):
     if hasattr(value, "item"):
         return _as_dict(value.item())
     raise TypeError(f"Expected an object, got {type(value).__name__}")
+
+
+@contextmanager
+def _timed_phase(record_trace, phase, **fields):
+    started, started_unix = perf_counter(), time()
+    timing = dict(fields)
+    try:
+        yield timing
+    finally:
+        duration = perf_counter() - started
+        timing.update(start_unix_s=started_unix, end_unix_s=started_unix + duration, duration_s=duration)
+        if record_trace is not None:
+            record_trace({"type": "phase_timing", "phase": phase, **timing})
 
 
 class PiAgentLoop(AgentLoopBase):
@@ -101,11 +115,12 @@ class PiAgentLoop(AgentLoopBase):
             )
         return prompt_ids
 
-    async def _generate(self, event, sampling_params, request_id, recorder, token_context):
+    async def _generate(self, event, sampling_params, request_id, recorder, token_context, record_trace=None):
         messages, tools = event.get("messages"), event.get("tools")
         if not isinstance(messages, list) or not isinstance(tools, list):
             raise PiSidecarError("Pi generation_request must contain messages and tools arrays")
-        prompt_ids = await self._prompt_tokens(messages, tools, token_context)
+        with _timed_phase(record_trace, "tokenization", generation_id=event["generation_id"]):
+            prompt_ids = await self._prompt_tokens(messages, tools, token_context)
         budget = int(self.rollout_config.response_length)
         if self.rollout_config.max_model_len:
             budget = min(budget, int(self.rollout_config.max_model_len) - len(prompt_ids))
@@ -115,12 +130,13 @@ class PiAgentLoop(AgentLoopBase):
         params["max_tokens"] = min(budget, int(params.get("max_tokens", budget)))
         if self.tool_parser.stop_token_ids:
             params["stop_token_ids"] = sorted(set(params.get("stop_token_ids", []) + self.tool_parser.stop_token_ids))
-        started = perf_counter()
-        output = await asyncio.wait_for(
-            self.server_manager.generate(request_id=request_id, prompt_ids=prompt_ids, sampling_params=params),
-            timeout=self.generation_timeout,
-        )
-        elapsed = perf_counter() - started
+        with _timed_phase(record_trace, "llm_request", generation_id=event["generation_id"]) as generation_timing:
+            output = await asyncio.wait_for(
+                self.server_manager.generate(request_id=request_id, prompt_ids=prompt_ids, sampling_params=params),
+                timeout=self.generation_timeout,
+            )
+        elapsed = generation_timing["duration_s"]
+        parsing_started, parsing_unix = perf_counter(), time()
         response_ids = list(output.token_ids)
         if len(response_ids) > params["max_tokens"]:
             raise ValueError("Rollout server exceeded the requested Pi token budget")
@@ -156,9 +172,24 @@ class PiAgentLoop(AgentLoopBase):
                 text = text.replace(special, "")
         result = {"text": text, "tool_calls": payload, "stop_reason": "toolUse" if payload else "stop"}
         token_context.record_generation(str(event["generation_id"]), response_ids, result)
+        if record_trace is not None:
+            duration = perf_counter() - parsing_started
+            record_trace(
+                {
+                    "type": "phase_timing",
+                    "phase": "parse_and_record",
+                    "generation_id": event["generation_id"],
+                    "start_unix_s": parsing_unix,
+                    "end_unix_s": parsing_unix + duration,
+                    "duration_s": duration,
+                    "prompt_tokens": len(prompt_ids),
+                    "response_tokens": len(response_ids),
+                }
+            )
         return result, turn
 
     async def run(self, sampling_params: dict, **kwargs) -> list[AgentLoopOutput]:
+        run_started = perf_counter()
         extra_info = _as_dict(kwargs.get("extra_info"))
         task_id = str(extra_info.get("task_id") or kwargs.get("task_id") or "")
         if not task_id:
@@ -179,7 +210,13 @@ class PiAgentLoop(AgentLoopBase):
 
         def record_trace(data):
             if trace:
-                trace.write(json.dumps(data, ensure_ascii=False) + "\n")
+                trace.write(
+                    json.dumps(
+                        {**data, "trace_unix_s": time(), "trace_elapsed_s": perf_counter() - run_started},
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
                 trace.flush()
 
         record_trace(
@@ -194,22 +231,25 @@ class PiAgentLoop(AgentLoopBase):
             }
         )
         try:
-            await client.start(
-                {
-                    "session_id": session_id,
-                    "task_id": task_id,
-                    "cwd": self.cwd,
-                    "training_extension": self.training_extension,
-                    "agent_dir": self.agent_dir,
-                    "pi_coding_agent_entrypoint": self.coding_agent_entrypoint,
-                    "prompt_entry_type": self.prompt_entry_type,
-                    "evaluation_entry_type": self.evaluation_entry_type,
-                    "max_turns": self.max_turns,
-                },
-                timeout=self.event_timeout,
-            )
+            with _timed_phase(record_trace, "sidecar_start"):
+                await client.start(
+                    {
+                        "session_id": session_id,
+                        "task_id": task_id,
+                        "cwd": self.cwd,
+                        "training_extension": self.training_extension,
+                        "agent_dir": self.agent_dir,
+                        "pi_coding_agent_entrypoint": self.coding_agent_entrypoint,
+                        "prompt_entry_type": self.prompt_entry_type,
+                        "evaluation_entry_type": self.evaluation_entry_type,
+                        "max_turns": self.max_turns,
+                    },
+                    timeout=self.event_timeout,
+                )
             while completion is None:
-                event = await client.next_event(self.event_timeout)
+                with _timed_phase(record_trace, "wait_event") as waiting:
+                    event = await client.next_event(self.event_timeout)
+                    waiting["next_event_type"] = event.get("type")
                 record_trace(event)
                 event_type = event.get("type")
                 if event_type in {"session_started", "session_info"}:
@@ -217,7 +257,9 @@ class PiAgentLoop(AgentLoopBase):
                 if event_type == "generation_request":
                     if evaluation is not None or len(recorder.turns) >= self.max_turns:
                         raise PiSidecarError("Pi requested generation after its terminal boundary")
-                    result, turn = await self._generate(event, sampling_params, session_id, recorder, token_context)
+                    result, turn = await self._generate(
+                        event, sampling_params, session_id, recorder, token_context, record_trace
+                    )
                     record_trace(
                         {
                             "type": "generation_tokens",
@@ -228,7 +270,8 @@ class PiAgentLoop(AgentLoopBase):
                             "response_mask": [1] * len(turn.response_ids),
                         }
                     )
-                    await client.respond(event["id"], result)
+                    with _timed_phase(record_trace, "response_send", generation_id=event["generation_id"]):
+                        await client.respond(event["id"], result)
                 elif event_type == "step_complete":
                     if evaluation is not None:
                         raise PiSidecarError("Pi completed a turn after its terminal evaluation")
@@ -250,8 +293,10 @@ class PiAgentLoop(AgentLoopBase):
             raise
         finally:
             try:
-                await client.close()
+                with _timed_phase(record_trace, "sidecar_close"):
+                    await client.close()
             finally:
+                record_trace({"type": "session_closed", "session_id": session_id})
                 if trace:
                     trace.close()
 
